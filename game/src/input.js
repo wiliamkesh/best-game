@@ -8,6 +8,9 @@ export const ACTION_SEAL = 'seal';
 export const ACTION_DETONATE = 'detonate';
 export const ACTION_CONFIRM = 'confirm';
 export const ACTION_PAUSE = 'pause';
+export const ACTION_DRAFT1 = 'draft1';
+export const ACTION_DRAFT2 = 'draft2';
+export const ACTION_DRAFT3 = 'draft3';
 
 const KEYS = {
   ArrowLeft: 'left',
@@ -25,6 +28,9 @@ const KEYS = {
   KeyR: ACTION_CONFIRM,
   KeyP: ACTION_PAUSE,
   Escape: ACTION_PAUSE,
+  Digit1: ACTION_DRAFT1,
+  Digit2: ACTION_DRAFT2,
+  Digit3: ACTION_DRAFT3,
 };
 
 export function createInput(canvas) {

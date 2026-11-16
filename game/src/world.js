@@ -8,9 +8,16 @@
 // the meteors off the Heart Star at the bottom of the sky.
 
 import {
-  COMBO, ENERGY, FIELD, HEART, LEVEL, LIVES, METEOR, STAR, WEAVER, WELL,
-  constellationScore, levelName, levelTarget, maxWells, regenForLevel,
+  BOSS, COMBO, DIFFICULTY, ENERGY, FIELD, HEART, LEVEL, LIVES, METEOR, STAR, WAVE, WEAVER, WELL,
+  constellationScore, levelName, levelTarget, maxWells, regenForLevel, waveForLevelTime,
 } from './config.js';
+import { UnweaverBoss, EVENT_BOSS_DEAD, EVENT_BOSS_HIT, EVENT_BOSS_PHASE } from './boss.js';
+import {
+  applyUpgrade, emptyOwned, generateUpgradeDraft, getActiveModifiers,
+} from './upgrades.js';
+
+// The boss events are re-exported so the loop (main.js) can listen for them.
+export { EVENT_BOSS_DEAD, EVENT_BOSS_HIT, EVENT_BOSS_PHASE };
 
 export const EVENT_PLACE = 'place';
 export const EVENT_CAPTURE = 'capture';
@@ -23,6 +30,8 @@ export const EVENT_LEVEL = 'level';
 export const EVENT_WIN = 'win';
 export const EVENT_OVER = 'over';
 export const EVENT_DENIED = 'denied';
+export const EVENT_DRAFT = 'draft';
+export const EVENT_UPGRADE = 'upgrade';
 
 let nextWellId = 1;
 
@@ -49,7 +58,7 @@ function makeStar(random, level) {
   };
 }
 
-function makeMeteor(random, level) {
+function makeMeteor(random, level, difficulty) {
   const big = level >= METEOR.bigFromLevel && random.next() < METEOR.bigChance;
   const hunter = !big && level >= METEOR.hunterFromLevel && random.next() < METEOR.hunterChance;
   const radius = big
@@ -57,7 +66,8 @@ function makeMeteor(random, level) {
     : hunter
       ? random.range(13, 17)
       : random.range(METEOR.minRadius, METEOR.maxRadius);
-  const baseSpeed = big ? METEOR.speed * 0.55 : METEOR.speed + level * METEOR.speedPerLevel;
+  const baseSpeed = (big ? METEOR.speed * 0.55 : METEOR.speed + level * METEOR.speedPerLevel)
+    * difficulty.meteorSpeed;
   const speed = (hunter ? baseSpeed * METEOR.hunterSpeed : baseSpeed)
     + random.range(-METEOR.speedJitter / 2, METEOR.speedJitter / 2);
   return {
@@ -74,10 +84,14 @@ function makeMeteor(random, level) {
   };
 }
 
-export function createWorld(random) {
+export function createWorld(random, difficultyId = 'tempest') {
+  const difficulty = DIFFICULTY[difficultyId] ?? DIFFICULTY.tempest;
   const state = {
     time: 0,
     level: 1,
+    levelTime: 0,
+    wave: 1,
+    difficulty: difficulty.id,
     score: 0,
     combo: 0,
     comboTimer: 0,
@@ -86,6 +100,12 @@ export function createWorld(random) {
     sealed: 0,
     sealedTotal: 0,
     energy: ENERGY.max,
+    upgrades: emptyOwned(),
+    draft: null,
+    boss: null,
+    shield: 0,
+    shieldTimer: 0,
+    deflectLeft: 0,
     weaver: {
       x: FIELD.width / 2,
       y: FIELD.height - 110,
@@ -110,6 +130,18 @@ export function createWorld(random) {
     starTimer: 0.7,
     meteorTimer: 1.2,
   };
+
+  function modifiers() {
+    return getActiveModifiers(state.upgrades);
+  }
+
+  function energyMax() {
+    return ENERGY.max + modifiers().energyMaxBonus;
+  }
+
+  function regen() {
+    return regenForLevel(state.level) + difficulty.energyRegen + modifiers().regenBonus;
+  }
 
   function burst(x, y, color, count, speed) {
     for (let i = 0; i < count; i += 1) {
@@ -178,11 +210,7 @@ export function createWorld(random) {
     const stars = wellStars(well);
     const target = levelTarget(state.level);
     if (stars.length < target.minStars) {
-      floatText(
-        well.x, well.y - 44,
-        target.grand ? 'THE GRAND NEEDS 7 STARS' : `NEED ${target.minStars} STARS`,
-        '#9aa3b5',
-      );
+      floatText(well.x, well.y - 44, `NEED ${target.minStars} STARS`, '#9aa3b5');
       events.push({ type: EVENT_DENIED });
       return;
     }
@@ -194,7 +222,7 @@ export function createWorld(random) {
     state.score += gained;
     state.sealed += 1;
     state.sealedTotal += 1;
-    state.energy = Math.min(ENERGY.max, state.energy + ENERGY.sealRefund * stars.length);
+    state.energy = Math.min(energyMax(), state.energy + ENERGY.sealRefund * stars.length);
     state.rising.push({
       points: stars.map((s) => ({ dx: s.x - well.x, dy: s.y - well.y, kind: s.kind })),
       x: well.x,
@@ -208,7 +236,28 @@ export function createWorld(random) {
     state.stars = state.stars.filter((s) => s.wellId !== well.id);
     state.wells = state.wells.filter((w) => w.id !== well.id);
     events.push({ type: EVENT_SEAL, size: stars.length, combo: state.combo });
-    if (target.grand) {
+    // The Grand is a 7-star seal on the final level; it ends the fight.
+    const isGrand = target.grand && stars.length >= WELL.grandMaxStars;
+    // A sealed constellation is a weapon against the Unweaver: it damages
+    // the boss. The Grand Constellation is the decisive blow — it ends the
+    // fight outright, whatever the boss's remaining health.
+    if (state.boss && !state.boss.dead) {
+      const dmg = state.boss.damageFromSeal(stars.length);
+      floatText(state.boss.x, state.boss.y + 84, `-${dmg}  UNWEAVER`, '#c084fc');
+      events.push({ type: EVENT_BOSS_HIT, damage: dmg, hp: state.boss.hp });
+      if (isGrand || state.boss.dead) {
+        state.won = true;
+        burst(BOSS.x, BOSS.y, '#c084fc', 120, 480);
+        burst(well.x, well.y, '#ffd94d', 80, 420);
+        burst(well.x, well.y, '#ffffff', 40, 300);
+        state.shockwaves.push({ x: well.x, y: well.y, r: 10, maxR: 420, life: 0.9, max: 0.9 });
+        state.flash = 0.35;
+        state.shake = 0.5;
+        events.push({ type: EVENT_BOSS_DEAD });
+        events.push({ type: EVENT_WIN });
+        return;
+      }
+    } else if (isGrand) {
       state.won = true;
       // The Grand seal is a spectacle: a golden storm, a shockwave, a flash.
       burst(HEART.x, HEART.y, '#ffd94d', 120, 480);
@@ -222,14 +271,74 @@ export function createWorld(random) {
     }
     if (state.sealed >= target.constellations) {
       state.score += LEVEL.clearBonus * state.level;
-      state.energy = ENERGY.max;
+      state.energy = energyMax();
       for (const m of state.meteors) burst(m.x, m.y, '#ff8a3d', 10, 180);
       state.meteors = [];
+      // After levels 2, 4 and 6 the run pauses for an upgrade draft: three
+      // cards, one per family, and the pick stays for the rest of the run.
+      const cleared = state.level;
       state.level += 1;
       state.sealed = 0;
-      state.banner = `LEVEL ${state.level} — ${levelName(state.level).name}`;
-      state.bannerTimer = 1.8;
+      state.levelTime = 0;
+      state.wave = 1;
+      state.deflectLeft = modifiers().deflectPerLevel;
+      if (cleared === 2 || cleared === 4 || cleared === 6) {
+        state.draft = generateUpgradeDraft(state.upgrades);
+        events.push({ type: EVENT_DRAFT, level: cleared });
+      } else {
+        state.banner = `LEVEL ${state.level} — ${levelName(state.level).name}`;
+        state.bannerTimer = 1.8;
+      }
       events.push({ type: EVENT_LEVEL });
+      if (state.level >= LEVEL.max && !state.boss) {
+        state.boss = new UnweaverBoss(random, difficulty);
+        state.banner = 'THE UNWEAVER WAKES';
+        state.bannerTimer = 2.2;
+      }
+    }
+  }
+
+  /** The player picks a drafted upgrade card; the run resumes. */
+  function chooseUpgrade(index, events) {
+    if (!state.draft || index < 0 || index >= state.draft.length) return;
+    const card = state.draft[index];
+    applyUpgrade(state.upgrades, card);
+    state.draft = null;
+    // Heartward's shield is granted (or renewed) by the pick itself.
+    if (modifiers().shieldMax > 0 && state.shield <= 0) state.shield = modifiers().shieldMax;
+    state.banner = `LEVEL ${state.level} — ${levelName(state.level).name}`;
+    state.bannerTimer = 1.8;
+    events.push({ type: EVENT_UPGRADE, id: card.id, name: card.name });
+  }
+
+  /** The boss's distortion: the fullest well is shaken apart. */
+  function scatterFullestWell() {
+    if (state.wells.length === 0) return;
+    let best = null;
+    let bestCount = -1;
+    for (const w of state.wells) {
+      const n = wellStars(w).length;
+      if (n > bestCount) {
+        bestCount = n;
+        best = w;
+      }
+    }
+    if (!best || bestCount === 0) return;
+    scatterWell(best);
+    burst(best.x, best.y, '#c084fc', 20, 240);
+    floatText(best.x, best.y - 44, 'DISTORTED', '#c084fc');
+    state.shake = Math.max(state.shake, 0.3);
+  }
+
+  /** The boss's shatter: a cluster of meteors aimed at a well or the Heart. */
+  function spawnShatterCluster(count) {
+    const target = UnweaverBoss.clusterTarget(state.wells);
+    for (let i = 0; i < count; i += 1) {
+      const m = UnweaverBoss.aimedMeteor(random, target.x, target.y);
+      // Spread the cluster so it does not arrive as one point.
+      m.x += random.range(-70, 70);
+      m.y += random.range(-40, 0);
+      state.meteors.push(m);
     }
   }
 
@@ -248,8 +357,9 @@ export function createWorld(random) {
   }
 
   function detonateNear(x, y, events) {
+    const radius = WELL.detonateRadius + modifiers().detonateBonus;
     let best = null;
-    let bestD = WELL.detonateRadius;
+    let bestD = radius;
     for (const w of state.wells) {
       const d = Math.hypot(w.x - x, w.y - y);
       if (d < bestD) {
@@ -260,11 +370,11 @@ export function createWorld(random) {
     if (!best) return;
     scatterWell(best);
     state.wells = state.wells.filter((w) => w.id !== best.id);
-    state.shockwaves.push({ x: best.x, y: best.y, r: 10, maxR: WELL.detonateRadius, life: 0.5, max: 0.5 });
+    state.shockwaves.push({ x: best.x, y: best.y, r: 10, maxR: radius, life: 0.5, max: 0.5 });
     let cleared = 0;
     for (let i = state.meteors.length - 1; i >= 0; i -= 1) {
       const m = state.meteors[i];
-      if (Math.hypot(m.x - best.x, m.y - best.y) < WELL.detonateRadius) {
+      if (Math.hypot(m.x - best.x, m.y - best.y) < radius) {
         burst(m.x, m.y, '#ff8a3d', 14, 220);
         state.meteors.splice(i, 1);
         cleared += 1;
@@ -308,8 +418,10 @@ export function createWorld(random) {
   }
 
   function stepStars(dt, events) {
-    const pr = pullRadius();
+    const mods = modifiers();
+    const pr = pullRadius() + mods.pullRadiusBonus;
     const cap = wellCapacity();
+    const starSpeedMult = state.boss && !state.boss.dead ? state.boss.starSpeedMult : 1;
     for (let i = state.stars.length - 1; i >= 0; i -= 1) {
       const s = state.stars[i];
       if (s.state === 'orbit') {
@@ -341,7 +453,7 @@ export function createWorld(random) {
         const dx = nearest.x - s.x;
         const dy = nearest.y - s.y;
         const d = Math.max(1, Math.hypot(dx, dy));
-        const pull = 1050 * (1 - d / pr);
+        const pull = 1050 * mods.pullMult * (1 - d / pr);
         s.vx += (dx / d) * pull * dt;
         s.vy += (dy / d) * pull * dt;
         const speed = Math.hypot(s.vx, s.vy);
@@ -368,12 +480,13 @@ export function createWorld(random) {
         }
       }
       s.x += s.vx * dt;
-      s.y += s.vy * dt;
+      s.y += s.vy * dt * starSpeedMult;
       if (s.y - s.radius > FIELD.groundY) state.stars.splice(i, 1);
     }
   }
 
   function stepMeteors(dt, events) {
+    const bossMult = state.boss && !state.boss.dead ? state.boss.meteorSpeedMult : 1;
     for (let i = state.meteors.length - 1; i >= 0; i -= 1) {
       const m = state.meteors[i];
       // Hunters steer toward the Heart Star: they are the level-3 pressure.
@@ -400,12 +513,13 @@ export function createWorld(random) {
         }
       }
       const speed = Math.hypot(m.vx, m.vy);
-      if (speed > 540) {
-        m.vx = (m.vx / speed) * 540;
-        m.vy = (m.vy / speed) * 540;
+      const cap = 540 * bossMult;
+      if (speed > cap) {
+        m.vx = (m.vx / speed) * cap;
+        m.vy = (m.vy / speed) * cap;
       }
-      m.x += m.vx * dt;
-      m.y += m.vy * dt;
+      m.x += m.vx * dt * bossMult;
+      m.y += m.vy * dt * bossMult;
       m.rot += m.spin * dt;
       let dead = false;
       for (const w of [...state.wells]) {
@@ -431,6 +545,31 @@ export function createWorld(random) {
       const hd = Math.hypot(HEART.x - m.x, HEART.y - m.y);
       if (hd < HEART.radius + m.radius) {
         state.meteors.splice(i, 1);
+        // Heartward's shield absorbs the hit instead of a life.
+        if (state.shield > 0) {
+          state.shield -= 1;
+          state.heart.flash = 1;
+          burst(HEART.x, HEART.y, '#7df9ff', 30, 300);
+          floatText(HEART.x, HEART.y - 52, 'SHIELD HELD', '#7df9ff');
+          if (modifiers().shieldRecharge > 0) state.shieldTimer = modifiers().shieldRecharge;
+          events.push({ type: EVENT_HEART, shielded: true });
+          continue;
+        }
+        // Heartward's last deflection turns one meteor away per level.
+        if (state.deflectLeft > 0) {
+          state.deflectLeft -= 1;
+          const away = Math.atan2(m.y - HEART.y, m.x - HEART.x);
+          state.meteors.push({
+            kind: 'meteor', sub: 'normal',
+            x: m.x, y: m.y,
+            vx: Math.cos(away) * 420, vy: Math.sin(away) * 420 - 200,
+            radius: m.radius, rot: m.rot, spin: m.spin, bent: true,
+          });
+          burst(HEART.x, HEART.y, '#ffd94d', 24, 280);
+          floatText(HEART.x, HEART.y - 52, 'DEFLECTED', '#ffd94d');
+          events.push({ type: EVENT_HEART, deflected: true });
+          continue;
+        }
         state.lives -= 1;
         state.heart.flash = 1;
         state.combo = 0;
@@ -507,8 +646,24 @@ export function createWorld(random) {
   function step(dt, input) {
     const events = [];
     if (state.over || state.won) return events;
+    // An upgrade draft pauses the world: nothing moves until a card is
+    // picked. The pick itself is handled by the loop (main.js), which reads
+    // the keys and the card regions and calls chooseUpgrade.
+    if (state.draft) return events;
     state.time += dt;
-    state.energy = Math.min(ENERGY.max, state.energy + regenForLevel(state.level) * dt);
+    state.levelTime += dt;
+    state.wave = waveForLevelTime(state.levelTime);
+    state.energy = Math.min(energyMax(), state.energy + regen() * dt);
+    // Heartward's shield renews after its recharge delay.
+    if (state.shield <= 0 && state.shieldTimer > 0) {
+      state.shieldTimer -= dt;
+      if (state.shieldTimer <= 0 && modifiers().shieldMax > 0) state.shield = modifiers().shieldMax;
+    }
+    // The Unweaver wakes on Level 8 and fights until it is broken.
+    if (state.boss && !state.boss.dead) {
+      const bossEvents = state.boss.step(dt, { scatterFullestWell, spawnShatterCluster });
+      events.push(...bossEvents);
+    }
     for (const action of input.takePressed()) {
       if (action === 'place') placeWellAt(state.weaver.x, state.weaver.y, events);
       if (action === 'seal') sealFullest(events);
@@ -537,10 +692,13 @@ export function createWorld(random) {
     }
     state.meteorTimer -= dt;
     if (state.meteorTimer <= 0) {
-      state.meteors.push(makeMeteor(random, state.level));
+      state.meteors.push(makeMeteor(random, state.level, difficulty));
+      // Waves raise the pressure: each wave shortens the meteor interval.
+      const waveScale = 1 - 0.08 * (state.wave - 1);
       const interval = Math.max(
         METEOR.minInterval,
-        METEOR.interval * Math.pow(METEOR.intervalScale, state.level - 1),
+        METEOR.interval * Math.pow(METEOR.intervalScale, state.level - 1)
+          * difficulty.meteorInterval * waveScale,
       );
       state.meteorTimer = interval * random.range(0.7, 1.3);
     }
@@ -550,5 +708,5 @@ export function createWorld(random) {
     return events;
   }
 
-  return { state, step, burst };
+  return { state, step, burst, chooseUpgrade };
 }

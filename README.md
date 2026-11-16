@@ -6,7 +6,7 @@
 
 A complete original arcade game: place gravity wells where the stars fall, let them
 catch the stars into orbit, seal the constellation before a meteor breaks the well —
-and guard the Heart Star at the bottom of the sky.
+and guard the Heart Star at the bottom of the sky. Then face the Unweaver.
 
 Built by an AI agent for make.fun's "Make the best game" bounty ($1,000 in USDC).
 
@@ -28,13 +28,16 @@ all sound synthesized with WebAudio.
 - **Place a well:** click empty sky, or Space (25 energy)
 - **Seal a constellation:** click the well, or E (needs 3+ stars)
 - **Detonate a well:** right-click, or X (blasts meteors away, loses the well)
+- **Choose a difficulty:** 1, 2 or 3 on the title screen (Serene / Tempest / Eclipse)
+- **Pick an upgrade:** 1, 2 or 3 (or click a card) when the draft opens
 - **Pause:** P or Escape
 - **Start / restart:** Enter, R or click
 
 ## The game
 
-- **Goal:** seal constellations to clear each level, and seal the 7-star Grand
-  Constellation on level 8 to win the sky. Lose all 3 lives and the Heart Star falls.
+- **Goal:** seal constellations to clear each level, then defeat the Unweaver on
+  level 8 — wound it with constellations, and end it with the 7-star Grand.
+  Lose all 3 lives and the Heart Star falls.
 - **Wells:** a gravity well pulls falling stars into orbit around it (up to 6, 7 on
   level 8). Wells cost 25 energy; energy regenerates, and sealing refunds 10 a star.
   You can only have a few wells at once, so every placement is a choice.
@@ -51,9 +54,22 @@ all sound synthesized with WebAudio.
 - **Stars:** normal, golden (worth more), and fast comets (from level 3).
 - **Levels:** 8 levels, each with its own name and pressure — First Light teaches
   gravity, Meteor Pressure brings the hunters, Low Energy (level 6) starves your
-  energy, and the Grand Constellation (level 8) is the finale. Each asks for more
+  energy, and the Unweaver (level 8) is the finale. Each asks for more
   constellations; the storm gets faster and denser, big meteors appear from level 4.
   Clearing a level refills your energy and pays a bonus.
+- **Waves:** each level runs in 4 waves; the storm thickens as the wave rises.
+- **Difficulty:** Serene (a gentle sky), Tempest (the intended storm), Eclipse
+  (faster meteors, a tougher boss, slower energy). Pick it on the title screen.
+- **Upgrades:** after levels 2, 4 and 6 the run pauses and offers one card per
+  family — Gravity Mastery (stronger pull, wider wells, steadier orbits),
+  Heartward (a shield for the Heart Star, then renewal, then a deflection),
+  Stellar Reservoir (faster energy, a deeper pool, bigger blasts). One pick per
+  draft, and it stays for the rest of the run: a build is a choice.
+- **The Unweaver:** the three-phase boss of level 8. Phase I distorts — it shakes
+  the fullest well apart. Phase II shatters — it launches meteor clusters at your
+  wells and the Heart Star. Phase III collapses — meteors and stars hurry, and
+  it shatters faster. Every sealed constellation wounds it; the 7-star Grand
+  Constellation is the blow that ends the fight.
 - **Best score** is kept in your browser (localStorage).
 
 ## Files
@@ -64,6 +80,8 @@ all sound synthesized with WebAudio.
 - `game/src/audio.js` — all sound, synthesized with WebAudio
 - `game/src/input.js` — keyboard, mouse and touch
 - `game/src/world.js` — the game state: wells, stars, meteors, the Heart Star
+- `game/src/boss.js` — the Unweaver: three phases, distortion, shatter clusters
+- `game/src/upgrades.js` — the upgrade system: three families, drafts, modifiers
 - `game/src/render.js` — the canvas painter: sky, wells, constellations, HUD, screens
 - `game/src/shots.js` — staged scenes for the screenshots
 - `game/src/main.js` — boot and the fixed-step loop

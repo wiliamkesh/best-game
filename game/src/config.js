@@ -88,7 +88,7 @@ export const LEVEL_NAMES = {
   5: { name: 'THIN AIR', sub: 'Less room, more falling sky' },
   6: { name: 'LOW ENERGY', sub: 'Your wells cost the same, your energy returns slower' },
   7: { name: 'THE LONG NIGHT', sub: 'One level from the Grand' },
-  8: { name: 'GRAND CONSTELLATION', sub: 'Seal a 7-star constellation to win the sky' },
+  8: { name: 'THE UNWEAVER', sub: 'Wound it with constellations — the Grand ends the fight' },
 };
 
 export function levelName(level) {
@@ -100,12 +100,70 @@ export function regenForLevel(level) {
   return level >= 6 ? 5 : ENERGY.regen;
 }
 
-/** The Heart Star: the anchor you protect at the bottom of the sky. */
-export const HEART = { x: 640, y: 636, radius: 26 };
+/** The Heart Star: the anchor you protect at the bottom of the sky.
+ * Raised from 636 so its label fits above the ground line. */
+export const HEART = { x: 640, y: 612, radius: 26 };
 
-/** How many constellations of at least minStars clear this level. */
+/** THE UNWEAVER: the three-phase boss of Level 8. Sealing a constellation
+ * damages it; the Grand Constellation (7 stars) is the decisive blow.
+ * Damage per seal: 10 + 5 per star past three, so a 3-star seal hits 10
+ * and the Grand hits 30. Boss HP 80 falls to roughly five seals. */
+export const BOSS = {
+  x: 640,
+  y: 190,
+  radius: 64,
+  maxHp: 80,
+  phase2At: 53,
+  phase3At: 27,
+  distortEvery: 5,
+  shatterEvery: 3.5,
+  shatterEveryPhase3: 2.5,
+  shatterCount: 3,
+  phase3MeteorSpeed: 1.35,
+  phase3StarSpeed: 1.2,
+};
+
+export function bossDamage(stars) {
+  return 10 + 5 * (stars - 3);
+}
+
+export function bossPhase(hp) {
+  if (hp > BOSS.phase2At) return 1;
+  if (hp > BOSS.phase3At) return 2;
+  return 3;
+}
+
+/** Difficulty: three modes with real differences, not just a speed multiplier. */
+export const DIFFICULTY = {
+  serene: {
+    id: 'serene', name: 'SERENE', desc: 'A gentle sky',
+    meteorSpeed: 0.8, meteorInterval: 1.3, energyRegen: 2, bossHp: 0.8,
+  },
+  tempest: {
+    id: 'tempest', name: 'TEMPEST', desc: 'The intended storm',
+    meteorSpeed: 1, meteorInterval: 1, energyRegen: 0, bossHp: 1,
+  },
+  eclipse: {
+    id: 'eclipse', name: 'ECLIPSE', desc: 'The sky turns on you',
+    meteorSpeed: 1.25, meteorInterval: 0.8, energyRegen: -2, bossHp: 1.25,
+  },
+};
+
+export const DIFFICULTY_ORDER = ['serene', 'tempest', 'eclipse'];
+
+/** Waves: each level runs in waves; the HUD shows WAVE n / N and spawn
+ * pressure rises with the wave. A wave lasts 14 seconds. */
+export const WAVE = { duration: 14, total: 4 };
+
+export function waveForLevelTime(t) {
+  return Math.min(WAVE.total, Math.floor(t / WAVE.duration) + 1);
+}
+
+/** How many constellations of at least minStars clear this level.
+ * Level 8 is the boss fight: any constellation of 3+ wounds the Unweaver,
+ * and the 7-star Grand is the blow that ends it. */
 export function levelTarget(level) {
-  if (level >= LEVEL.max) return { constellations: 1, minStars: 7, grand: true };
+  if (level >= LEVEL.max) return { constellations: 1, minStars: 3, grand: true };
   return { constellations: 2 + level, minStars: 3, grand: false };
 }
 

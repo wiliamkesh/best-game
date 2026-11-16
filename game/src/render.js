@@ -5,13 +5,34 @@
 // a rich sky, wells that read as glowing rings with constellations inside them, a Heart
 // Star worth protecting, and a HUD that states the goal at a glance.
 
-import { FIELD, FONT, HEART, PALETTE, WELL, levelName, levelTarget, maxWells } from './config.js';
+import {
+  BOSS, DIFFICULTY_ORDER, FIELD, FONT, HEART, PALETTE, WAVE, WELL,
+  levelName, levelTarget, maxWells,
+} from './config.js';
+import { DIFFICULTY } from './config.js';
+import { UPGRADE_DEFINITIONS, UPGRADE_FAMILIES } from './upgrades.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
 export const SCREEN_PAUSED = 'paused';
 export const SCREEN_OVER = 'over';
 export const SCREEN_WIN = 'win';
+export const SCREEN_DRAFT = 'draft';
+
+/** The three upgrade cards on the draft screen, in order. Shared with the
+ * loop so a click on a card picks it. */
+export const DRAFT_CARDS = [
+  { x: 200, y: 240, w: 280, h: 220 },
+  { x: 500, y: 240, w: 280, h: 220 },
+  { x: 800, y: 240, w: 280, h: 220 },
+];
+
+/** The three difficulty buttons on the title screen, in order. */
+export const DIFFICULTY_BUTTONS = [
+  { x: 400, y: 452, w: 150, h: 40, id: 'serene' },
+  { x: 565, y: 452, w: 150, h: 40, id: 'tempest' },
+  { x: 730, y: 452, w: 150, h: 40, id: 'eclipse' },
+];
 
 function drawStarShape(ctx, x, y, r, rot) {
   ctx.beginPath();
@@ -254,6 +275,68 @@ export function createRenderer(canvas, backdropStars) {
     ctx.restore();
   }
 
+  function drawBoss(s, time) {
+    const b = s.boss;
+    if (!b || b.dead) return;
+    const colors = { 1: '#7c4dff', 2: '#ff2e4d', 3: '#ffd94d' };
+    const color = colors[b.phase] || '#7c4dff';
+    const pulse = 1 + 0.05 * Math.sin(time * 2.4);
+    const r = BOSS.radius * pulse;
+    ctx.save();
+    // A swirling void: concentric rings turning opposite ways, a dark core.
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 34;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, r, time * 0.7, time * 0.7 + Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, r * 0.72, -time * 1.1, -time * 1.1 + 4.4);
+    ctx.stroke();
+    ctx.fillStyle = radial(b.x, b.y, 4, r, [[0, 'rgba(6,4,18,0.95)'], [0.7, color], [1, 'rgba(0,0,0,0)']]);
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    // The eye: a slit that watches the Weaver. It widens as the phases rise.
+    const eyeW = 16 + b.phase * 6;
+    ctx.fillStyle = b.phase === 3 ? '#ffffff' : '#ffd94d';
+    ctx.shadowColor = '#ffd94d';
+    ctx.shadowBlur = 18;
+    ctx.beginPath();
+    ctx.ellipse(b.x, b.y, eyeW, 7 + b.phase * 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#0b1026';
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    if (b.flash > 0) {
+      ctx.globalAlpha = Math.min(1, b.flash);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, r + 10, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    // Phase name under the boss, so the fight reads at a glance.
+    const phaseNames = { 1: 'PHASE I — DISTORTION', 2: 'PHASE II — SHATTER', 3: 'PHASE III — COLLAPSE' };
+    ctx.fillStyle = color;
+    ctx.font = `800 14px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.fillText('THE UNWEAVER', b.x, b.y + r + 24);
+    ctx.fillStyle = PALETTE.muted;
+    ctx.font = `600 12px ${FONT}`;
+    ctx.fillText(phaseNames[b.phase] || '', b.x, b.y + r + 42);
+    ctx.restore();
+  }
+
   function drawHeart(s, time) {
     const h = s.heart;
     const dead = s.lives <= 0;
@@ -371,7 +454,7 @@ export function createRenderer(canvas, backdropStars) {
     if (target.grand) {
       ctx.fillStyle = PALETTE.constellation;
       ctx.font = `700 15px ${FONT}`;
-      ctx.fillText('GRAND: SEAL A 7-STAR CONSTELLATION', FIELD.width / 2, 58);
+      ctx.fillText('WOUND THE UNWEAVER — THE GRAND ENDS IT', FIELD.width / 2, 58);
     } else {
       ctx.fillStyle = PALETTE.constellation;
       ctx.font = `800 15px ${FONT}`;
@@ -396,6 +479,50 @@ export function createRenderer(canvas, backdropStars) {
       ctx.fillStyle = '#ff5ad1';
       ctx.font = `800 20px ${FONT}`;
       ctx.fillText(`COMBO x${s.combo}`, FIELD.width - 28, 64);
+    }
+    // The Unweaver's health bar, top centre under the objective: the boss
+    // fight must read in the HUD, not just in the sky.
+    if (s.boss && !s.boss.dead) {
+      const bw = 340;
+      const bx = FIELD.width / 2 - bw / 2;
+      const by = 86;
+      ctx.fillStyle = 'rgba(124,77,255,0.25)';
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, 12, 6);
+      ctx.fill();
+      const frac = Math.max(0, s.boss.hp / s.boss.maxHp);
+      ctx.fillStyle = s.boss.phase === 3 ? '#ffd94d' : s.boss.phase === 2 ? '#ff2e4d' : '#7c4dff';
+      ctx.beginPath();
+      ctx.roundRect(bx, by, Math.max(12, bw * frac), 12, 6);
+      ctx.fill();
+      ctx.fillStyle = PALETTE.text;
+      ctx.font = `800 12px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.fillText(`THE UNWEAVER  ${s.boss.hp} / ${s.boss.maxHp}`, FIELD.width / 2, by + 26);
+    }
+    // Wave counter and difficulty, under the score panel.
+    ctx.textAlign = 'left';
+    ctx.fillStyle = PALETTE.muted;
+    ctx.font = `700 13px ${FONT}`;
+    ctx.fillText(`WAVE ${s.wave} / ${WAVE.total}`, 28, 96);
+    const diff = DIFFICULTY[s.difficulty] ?? DIFFICULTY.tempest;
+    ctx.fillStyle = PALETTE.accent;
+    ctx.fillText(diff.name, 28, 114);
+    // Owned upgrades, as small badges under the wave line.
+    let ux = 28;
+    for (const family of UPGRADE_FAMILIES) {
+      const rank = s.upgrades[family] ?? 0;
+      if (rank <= 0) continue;
+      const def = UPGRADE_DEFINITIONS[family][rank - 1];
+      ctx.fillStyle = 'rgba(77,232,255,0.16)';
+      ctx.beginPath();
+      ctx.roundRect(ux, 124, 30, 22, 6);
+      ctx.fill();
+      ctx.fillStyle = PALETTE.accent;
+      ctx.font = `800 13px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.fillText(def.icon, ux + 15, 140);
+      ux += 36;
     }
     // Energy bar and well slots, bottom left.
     ctx.textAlign = 'left';
@@ -462,39 +589,107 @@ export function createRenderer(canvas, backdropStars) {
     ctx.restore();
   }
 
-  function drawTitle(s, best) {
+  function drawTitle(s, best, difficultyId) {
     // Two demo constellations flank the panel, so the title screen is a sky, not a box.
     drawDemoConstellation(168, 300, [0.3, 1.6, 2.9, 4.1, 5.3], s.time);
     drawDemoConstellation(1112, 420, [0.8, 2.2, 3.6, 5.0], s.time);
     ctx.fillStyle = 'rgba(4, 6, 14, 0.45)';
     ctx.fillRect(0, 0, FIELD.width, FIELD.height);
-    panel(340, 110, 600, 470);
+    panel(340, 96, 600, 512);
     ctx.textAlign = 'center';
     ctx.fillStyle = PALETTE.accent;
     ctx.font = `800 64px ${FONT}`;
-    ctx.fillText('STARFALL', FIELD.width / 2, 200);
+    ctx.fillText('STARFALL', FIELD.width / 2, 178);
     ctx.fillStyle = PALETTE.text;
     ctx.font = `500 20px ${FONT}`;
-    ctx.fillText('Weave the falling stars into constellations.', FIELD.width / 2, 242);
+    ctx.fillText('Weave the falling stars into constellations.', FIELD.width / 2, 216);
     // A live four-step demo of the loop, so the title shows the game instead
     // of describing it in dense text: star falls, well catches, seal, score.
-    drawLoopDemo(FIELD.width / 2, 300, s.time);
-    ctx.fillStyle = PALETTE.text;
-    ctx.font = `600 17px ${FONT}`;
-    ctx.fillText('Click empty sky: place a gravity well  ·  Click a well: seal its stars', FIELD.width / 2, 392);
-    ctx.fillText('Right-click / X: detonate a well to blast meteors  ·  Guard the Heart Star', FIELD.width / 2, 420);
+    drawLoopDemo(FIELD.width / 2, 266, s.time);
     ctx.fillStyle = PALETTE.constellation;
-    ctx.font = `700 16px ${FONT}`;
-    ctx.fillText('Level 8: seal a 7-star Grand Constellation to win the sky.', FIELD.width / 2, 452);
+    ctx.font = `800 16px ${FONT}`;
+    ctx.fillText('WEAVE  •  UPGRADE  •  DEFEND', FIELD.width / 2, 356);
+    ctx.fillStyle = PALETTE.text;
+    ctx.font = `600 16px ${FONT}`;
+    ctx.fillText('Click empty sky: place a gravity well  ·  Click a well: seal its stars', FIELD.width / 2, 384);
+    ctx.fillText('Right-click / X: detonate a well to blast meteors  ·  Guard the Heart Star', FIELD.width / 2, 408);
+    // Difficulty: three real modes, picked here (keys 1/2/3 or a click).
+    ctx.fillStyle = PALETTE.muted;
+    ctx.font = `700 14px ${FONT}`;
+    ctx.fillText('CHOOSE YOUR STORM  —  press 1, 2 or 3', FIELD.width / 2, 436);
+    for (const btn of DIFFICULTY_BUTTONS) {
+      const d = DIFFICULTY[btn.id];
+      const selected = btn.id === difficultyId;
+      ctx.fillStyle = selected ? 'rgba(77,232,255,0.28)' : 'rgba(154,163,181,0.12)';
+      ctx.beginPath();
+      ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 10);
+      ctx.fill();
+      ctx.strokeStyle = selected ? PALETTE.accent : 'rgba(154,163,181,0.4)';
+      ctx.lineWidth = selected ? 2.5 : 1.5;
+      ctx.stroke();
+      ctx.fillStyle = selected ? PALETTE.text : PALETTE.muted;
+      ctx.font = `800 15px ${FONT}`;
+      ctx.fillText(d.name, btn.x + btn.w / 2, btn.y + 26);
+    }
+    ctx.fillStyle = PALETTE.constellation;
+    ctx.font = `700 15px ${FONT}`;
+    ctx.fillText('8 LEVELS  ·  3 DIFFICULTIES  ·  FINAL BOSS', FIELD.width / 2, 520);
     ctx.fillStyle = PALETTE.star;
     ctx.font = `700 18px ${FONT}`;
-    ctx.fillText(`BEST SCORE  ${best}`, FIELD.width / 2, 500);
+    ctx.fillText(`BEST SCORE  ${best}`, FIELD.width / 2, 550);
     ctx.fillStyle = PALETTE.accent;
     ctx.font = `700 22px ${FONT}`;
     const pulse = 0.65 + 0.35 * Math.sin(performance.now() / 300);
     ctx.globalAlpha = pulse;
-    ctx.fillText('CLICK OR PRESS ENTER TO START', FIELD.width / 2, 544);
+    ctx.fillText('CLICK OR PRESS ENTER TO START', FIELD.width / 2, 584);
     ctx.globalAlpha = 1;
+  }
+
+  // The upgrade draft: three cards, one per family, and the pick stays for
+  // the rest of the run. Keys 1/2/3 or a click on a card.
+  function drawDraft(s) {
+    ctx.fillStyle = 'rgba(4, 6, 14, 0.6)';
+    ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = PALETTE.text;
+    ctx.font = `800 40px ${FONT}`;
+    ctx.fillText('CHOOSE AN UPGRADE', FIELD.width / 2, 150);
+    ctx.fillStyle = PALETTE.muted;
+    ctx.font = `400 17px ${FONT}`;
+    ctx.fillText('One card, one build. It stays for the rest of this run.', FIELD.width / 2, 182);
+    ctx.fillStyle = PALETTE.constellation;
+    ctx.font = `700 15px ${FONT}`;
+    ctx.fillText('Press 1, 2 or 3 — or click a card', FIELD.width / 2, 210);
+    const cards = s.draft ?? [];
+    for (let i = 0; i < cards.length; i += 1) {
+      const card = cards[i];
+      const rect = DRAFT_CARDS[i];
+      panel(rect.x, rect.y, rect.w, rect.h);
+      ctx.fillStyle = PALETTE.accent;
+      ctx.font = `800 44px ${FONT}`;
+      ctx.fillText(card.icon, rect.x + rect.w / 2, rect.y + 64);
+      ctx.fillStyle = PALETTE.text;
+      ctx.font = `800 19px ${FONT}`;
+      ctx.fillText(card.name, rect.x + rect.w / 2, rect.y + 104);
+      ctx.fillStyle = PALETTE.muted;
+      ctx.font = `400 15px ${FONT}`;
+      // Wrap the description across two lines.
+      const words = card.desc.split(' ');
+      let line1 = '';
+      let line2 = '';
+      for (const w of words) {
+        if ((line1 + ' ' + w).trim().length <= 26 && line2 === '') line1 = (line1 + ' ' + w).trim();
+        else line2 = (line2 + ' ' + w).trim();
+      }
+      ctx.fillText(line1, rect.x + rect.w / 2, rect.y + 134);
+      if (line2) ctx.fillText(line2, rect.x + rect.w / 2, rect.y + 158);
+      ctx.fillStyle = PALETTE.constellation;
+      ctx.font = `800 14px ${FONT}`;
+      ctx.fillText(`RANK ${card.rank}  ·  ${card.family.toUpperCase()}`, rect.x + rect.w / 2, rect.y + 192);
+      ctx.fillStyle = PALETTE.muted;
+      ctx.font = `700 15px ${FONT}`;
+      ctx.fillText(`[${i + 1}]`, rect.x + rect.w / 2, rect.y + rect.h - 12);
+    }
   }
 
   // Four-step loop demo: a star falls into a well, orbits, seals into a
@@ -598,6 +793,22 @@ export function createRenderer(canvas, backdropStars) {
   function drawWin(s, best, isBest) {
     ctx.fillStyle = 'rgba(4, 6, 14, 0.6)';
     ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+    // The defeated Unweaver fading away behind the panel: proof the boss
+    // was beaten, not just survived.
+    if (s.boss) {
+      ctx.save();
+      ctx.globalAlpha = 0.28;
+      ctx.strokeStyle = '#7c4dff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(BOSS.x, BOSS.y, 64, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#ffd94d';
+      ctx.font = `800 13px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.fillText('THE UNWEAVER  —  UNWOVEN', BOSS.x, BOSS.y + 88);
+      ctx.restore();
+    }
     // The Grand Constellation itself, golden and glowing above the panel:
     // the victory screen shows the payoff, not just a score.
     const gx = FIELD.width / 2;
@@ -640,7 +851,7 @@ export function createRenderer(canvas, backdropStars) {
     ctx.fillText('THE SKY IS WOVEN', FIELD.width / 2, 268);
     ctx.fillStyle = PALETTE.text;
     ctx.font = `400 18px ${FONT}`;
-    ctx.fillText('You sealed the Grand Constellation. The Heart Star shines again.', FIELD.width / 2, 306);
+    ctx.fillText('You sealed the Grand Constellation and unmade the Unweaver.', FIELD.width / 2, 306);
     if (isBest) {
       ctx.fillStyle = PALETTE.star;
       ctx.font = `800 22px ${FONT}`;
@@ -661,7 +872,7 @@ export function createRenderer(canvas, backdropStars) {
     ctx.globalAlpha = 1;
   }
 
-  function draw(s, screen, best, isBest) {
+  function draw(s, screen, best, isBest, difficultyId) {
     resize();
     const { ox, oy } = applyTransform();
     ctx.save();
@@ -671,7 +882,7 @@ export function createRenderer(canvas, backdropStars) {
     }
     drawBackground(s.time);
     if (screen === SCREEN_TITLE) {
-      drawTitle(s, best);
+      drawTitle(s, best, difficultyId ?? 'tempest');
       ctx.restore();
       return;
     }
@@ -697,6 +908,8 @@ export function createRenderer(canvas, backdropStars) {
       }
       ctx.restore();
     }
+    // The Unweaver, when it has woken on Level 8.
+    drawBoss(s, s.time);
     // Wells and the stars orbiting them.
     for (const w of s.wells) drawWell(s, w, s.time);
     // Falling stars.
@@ -752,6 +965,7 @@ export function createRenderer(canvas, backdropStars) {
       ctx.fillStyle = `rgba(255,255,255,${s.flash * 0.5})`;
       ctx.fillRect(0, 0, FIELD.width, FIELD.height);
     }
+    if (screen === SCREEN_DRAFT) drawDraft(s);
     if (screen === SCREEN_PAUSED) drawPaused();
     if (screen === SCREEN_OVER) drawOver(s, best, isBest);
     if (screen === SCREEN_WIN) drawWin(s, best, isBest);

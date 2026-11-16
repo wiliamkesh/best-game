@@ -6,15 +6,23 @@
 // scene instead of running the loop, paints it twice and sets window.__shotReady for a
 // screenshot.
 import { BEST_KEY, LIVES, STEP } from './config.js';
+import { DIFFICULTY_ORDER } from './config.js';
 import { createRandom } from './random.js';
 import { createSound } from './audio.js';
 import {
   createWorld,
-  EVENT_CAPTURE, EVENT_DENIED, EVENT_DETONATE, EVENT_HEART, EVENT_LEVEL,
-  EVENT_OVER, EVENT_PLACE, EVENT_SEAL, EVENT_SHATTER, EVENT_WELL_LOST, EVENT_WIN,
+  EVENT_BOSS_DEAD, EVENT_BOSS_HIT, EVENT_BOSS_PHASE, EVENT_CAPTURE, EVENT_DENIED,
+  EVENT_DETONATE, EVENT_DRAFT, EVENT_HEART, EVENT_LEVEL, EVENT_OVER, EVENT_PLACE,
+  EVENT_SEAL, EVENT_SHATTER, EVENT_UPGRADE, EVENT_WELL_LOST, EVENT_WIN,
 } from './world.js';
-import { ACTION_CONFIRM, ACTION_PAUSE, ACTION_PLACE, createInput } from './input.js';
-import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
+import {
+  ACTION_CONFIRM, ACTION_DRAFT1, ACTION_DRAFT2, ACTION_DRAFT3, ACTION_PAUSE, ACTION_PLACE,
+  createInput,
+} from './input.js';
+import {
+  DIFFICULTY_BUTTONS, DRAFT_CARDS, SCREEN_DRAFT, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY,
+  SCREEN_TITLE, SCREEN_WIN, createRenderer,
+} from './render.js';
 import { stageShot } from './shots.js';
 
 /** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped, not replayed. */
@@ -46,6 +54,9 @@ for (let i = 0; i < 110; i += 1) {
 const world = createWorld(createRandom(seed));
 const renderer = createRenderer(canvas, backdropStars);
 
+/** The difficulty picked on the title screen; TEMPEST is the default. */
+let difficultyId = 'tempest';
+
 function readBest() {
   try {
     return Number.parseInt(window.localStorage.getItem(BEST_KEY) ?? '0', 10) || 0;
@@ -70,7 +81,7 @@ function runShot(name) {
   const scene = stageShot(name, world);
   let painted = 0;
   function paint() {
-    renderer.draw(world.state, scene.screen, scene.best, scene.isBest);
+    renderer.draw(world.state, scene.screen, scene.best, scene.isBest, difficultyId);
     painted += 1;
     if (painted < 2) requestAnimationFrame(paint);
     else window.__shotReady = true;
@@ -98,6 +109,11 @@ function runGame() {
       if (e.type === EVENT_LEVEL) sound.levelup();
       if (e.type === EVENT_WIN) sound.win();
       if (e.type === EVENT_DENIED) sound.denied();
+      if (e.type === EVENT_BOSS_HIT) sound.bossHit();
+      if (e.type === EVENT_BOSS_PHASE) sound.bossPhase();
+      if (e.type === EVENT_BOSS_DEAD) sound.bossDead();
+      if (e.type === EVENT_DRAFT) announce('Choose an upgrade — press 1, 2 or 3, or click a card.');
+      if (e.type === EVENT_UPGRADE) announce(`Upgrade chosen: ${e.name}.`);
       if (e.type === EVENT_OVER) {
         sound.over();
         if (world.state.score > best) {
@@ -113,13 +129,19 @@ function runGame() {
   function start() {
     sound.unlock();
     sound.click();
-    const fresh = createWorld(createRandom(Math.floor(Math.random() * 4294967296)));
+    const fresh = createWorld(createRandom(Math.floor(Math.random() * 4294967296)), difficultyId);
     // Swap the fresh world's state in, keeping the same object the renderer reads.
     Object.keys(world.state).forEach((k) => delete world.state[k]);
     Object.assign(world.state, fresh.state);
     world.state.lives = LIVES;
     screen = SCREEN_PLAY;
     announce('Playing. Place wells, catch stars, seal constellations, guard the Heart Star.');
+  }
+
+  /** A click inside a rectangle, in logical coordinates. */
+  function clickIn(click, rect) {
+    return click.x >= rect.x && click.x <= rect.x + rect.w
+      && click.y >= rect.y && click.y <= rect.y + rect.h;
   }
 
   function frame(now) {
@@ -132,6 +154,41 @@ function runGame() {
     // the click that starts the game never also places a well.
     const pressed = input.peekPressed();
     const clicks = input.peekClicks();
+    // Difficulty on the title screen: keys 1/2/3, or a click on a button.
+    if (screen === SCREEN_TITLE) {
+      if (pressed.has(ACTION_DRAFT1)) difficultyId = DIFFICULTY_ORDER[0];
+      if (pressed.has(ACTION_DRAFT2)) difficultyId = DIFFICULTY_ORDER[1];
+      if (pressed.has(ACTION_DRAFT3)) difficultyId = DIFFICULTY_ORDER[2];
+      for (const c of clicks) {
+        for (const btn of DIFFICULTY_BUTTONS) {
+          if (clickIn(c, btn)) difficultyId = btn.id;
+        }
+      }
+    }
+    // The upgrade draft: keys 1/2/3, or a click on a card. The world is
+    // paused while the draft is open; the pick resumes it.
+    if (screen === SCREEN_PLAY && world.state.draft) {
+      screen = SCREEN_DRAFT;
+    }
+    if (screen === SCREEN_DRAFT) {
+      let picked = -1;
+      if (pressed.has(ACTION_DRAFT1)) picked = 0;
+      if (pressed.has(ACTION_DRAFT2)) picked = 1;
+      if (pressed.has(ACTION_DRAFT3)) picked = 2;
+      for (const c of clicks) {
+        for (let i = 0; i < DRAFT_CARDS.length; i += 1) {
+          if (clickIn(c, DRAFT_CARDS[i])) picked = i;
+        }
+      }
+      if (picked >= 0) {
+        const events = [];
+        world.chooseUpgrade(picked, events);
+        handleEvents(events);
+        input.takePressed();
+        input.takeClicks();
+        screen = SCREEN_PLAY;
+      }
+    }
     if (pressed.has(ACTION_PAUSE) && screen === SCREEN_PLAY) {
       screen = SCREEN_PAUSED;
       input.takePressed();
@@ -162,6 +219,10 @@ function runGame() {
         const events = world.step(STEP, input);
         handleEvents(events);
         accumulator -= STEP;
+        if (world.state.draft) {
+          screen = SCREEN_DRAFT;
+          break;
+        }
         if (world.state.over) {
           screen = SCREEN_OVER;
           break;
@@ -178,7 +239,7 @@ function runGame() {
         }
       }
     }
-    renderer.draw(world.state, screen, best, isBest);
+    renderer.draw(world.state, screen, best, isBest, difficultyId);
   }
 
   announce('Starfall. Place wells, catch stars, seal constellations, guard the Heart Star. Press Enter or click to start.');

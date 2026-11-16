@@ -126,6 +126,24 @@ export function createSound() {
         setTimeout(() => tone(f, 0.28, 'triangle', 0.45), i * 140);
       });
     },
+    /** A sealed constellation wounds the Unweaver: a low dissonant hit. */
+    bossHit() {
+      tone(220, 0.18, 'sawtooth', 0.5, 110);
+      tone(233, 0.18, 'sawtooth', 0.35, 116);
+    },
+    /** The Unweaver changes phase: a rising dread chord. */
+    bossPhase() {
+      tone(98, 0.5, 'sawtooth', 0.5, 196);
+      tone(147, 0.5, 'square', 0.3, 294);
+      noise(0.4, 0.4, 500);
+    },
+    /** The Unweaver is unmade: a shattering fall into the win fanfare. */
+    bossDead() {
+      noise(0.6, 0.7, 900);
+      [392, 294, 196, 98].forEach((f, i) => {
+        setTimeout(() => tone(f, 0.3, 'sawtooth', 0.4), i * 90);
+      });
+    },
     /** A denied action: a dull tick. */
     denied() {
       tone(180, 0.08, 'sine', 0.3, 140);
