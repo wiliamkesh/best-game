@@ -45,11 +45,15 @@ all sound synthesized with WebAudio.
 - **Meteors:** they break any well they hit (its stars scatter, your combo resets),
   and they hunt the Heart Star. But a well bends a meteor's path — place one in
   the way and the meteor curves off, or shatters against another meteor (+50).
-  Detonate a well to clear the sky around it in an emergency.
+  Detonate a well to clear the sky around it in an emergency. **Hunters** (from
+  level 3) are fast, red-hot meteors that steer straight for the Heart Star;
+  **big** meteors (from level 4) are heavy and barely bend to a well's gravity.
 - **Stars:** normal, golden (worth more), and fast comets (from level 3).
-- **Levels:** 8 levels. Each asks for more constellations; the storm gets faster
-  and denser, big meteors appear from level 4. Clearing a level refills your energy
-  and pays a bonus.
+- **Levels:** 8 levels, each with its own name and pressure — First Light teaches
+  gravity, Meteor Pressure brings the hunters, Low Energy (level 6) starves your
+  energy, and the Grand Constellation (level 8) is the finale. Each asks for more
+  constellations; the storm gets faster and denser, big meteors appear from level 4.
+  Clearing a level refills your energy and pays a bonus.
 - **Best score** is kept in your browser (localStorage).
 
 ## Files

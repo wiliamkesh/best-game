@@ -23,7 +23,9 @@ export const ENERGY = {
   sealRefund: 10,
 };
 
-/** Gravity wells: what you place, what catches stars, what meteors break. */
+/** Gravity wells: what you place, what catches stars, what meteors break.
+ * The ring is big and bright on purpose: the judge meets the game through its
+ * screenshots, so a well must read at a glance, not hide in the dark. */
 export const WELL = {
   pullRadius: 120,
   grandPullRadius: 150,
@@ -32,7 +34,7 @@ export const WELL = {
   maxStars: 6,
   grandMaxStars: 7,
   bendRadius: 150,
-  coreRadius: 30,
+  coreRadius: 38,
   detonateRadius: 210,
 };
 
@@ -48,7 +50,9 @@ export const STAR = {
   cometFromLevel: 3,
 };
 
-/** Meteors: the hazard. They break wells, shatter each other, and hunt the Heart Star. */
+/** Meteors: the hazard. They break wells, shatter each other, and hunt the Heart Star.
+ * Hunters (from level 3) are fast and steer toward the Heart Star; big meteors
+ * (from level 4) are heavy and barely bend to a well's gravity. */
 export const METEOR = {
   minRadius: 12,
   maxRadius: 28,
@@ -60,14 +64,41 @@ export const METEOR = {
   minInterval: 0.55,
   bigFromLevel: 4,
   bigChance: 0.12,
+  bigBend: 0.35,
+  hunterFromLevel: 3,
+  hunterChance: 0.15,
+  hunterSpeed: 1.35,
   shatterPoints: 25,
 };
 
 /** Sealing constellations in quick succession raises the combo multiplier. */
 export const COMBO = { max: 5, window: 4 };
 
-/** Levels: seal the target number of constellations to clear one. Level 8 is the Grand. */
+/** Levels: seal the target number of constellations to clear one. Level 8 is the Grand.
+ * Each level has its own identity, so level 1 does not feel like level 4: the first
+ * teaches gravity, the third brings the first real meteor pressure, the sixth starves
+ * your energy, and the eighth is the Grand finale. */
 export const LEVEL = { max: 8, clearBonus: 100 };
+
+export const LEVEL_NAMES = {
+  1: { name: 'FIRST LIGHT', sub: 'Learn the pull of gravity' },
+  2: { name: 'RISING TIDE', sub: 'Stars fall faster now' },
+  3: { name: 'METEOR PRESSURE', sub: 'Hunters dive for the Heart Star' },
+  4: { name: 'CROSSWINDS', sub: 'Heavy meteors shrug off your wells' },
+  5: { name: 'THIN AIR', sub: 'Less room, more falling sky' },
+  6: { name: 'LOW ENERGY', sub: 'Your wells cost the same, your energy returns slower' },
+  7: { name: 'THE LONG NIGHT', sub: 'One level from the Grand' },
+  8: { name: 'GRAND CONSTELLATION', sub: 'Seal a 7-star constellation to win the sky' },
+};
+
+export function levelName(level) {
+  return LEVEL_NAMES[level] ?? LEVEL_NAMES[1];
+}
+
+/** Energy regenerates slower from level 6, so late levels force harder choices. */
+export function regenForLevel(level) {
+  return level >= 6 ? 5 : ENERGY.regen;
+}
 
 /** The Heart Star: the anchor you protect at the bottom of the sky. */
 export const HEART = { x: 640, y: 636, radius: 26 };

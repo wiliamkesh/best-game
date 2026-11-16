@@ -9,7 +9,7 @@
 
 import {
   COMBO, ENERGY, FIELD, HEART, LEVEL, LIVES, METEOR, STAR, WEAVER, WELL,
-  constellationScore, levelTarget, maxWells,
+  constellationScore, levelName, levelTarget, maxWells, regenForLevel,
 } from './config.js';
 
 export const EVENT_PLACE = 'place';
@@ -51,14 +51,18 @@ function makeStar(random, level) {
 
 function makeMeteor(random, level) {
   const big = level >= METEOR.bigFromLevel && random.next() < METEOR.bigChance;
+  const hunter = !big && level >= METEOR.hunterFromLevel && random.next() < METEOR.hunterChance;
   const radius = big
     ? random.range(30, 40)
-    : random.range(METEOR.minRadius, METEOR.maxRadius);
-  const speed = (big ? METEOR.speed * 0.55 : METEOR.speed + level * METEOR.speedPerLevel)
+    : hunter
+      ? random.range(13, 17)
+      : random.range(METEOR.minRadius, METEOR.maxRadius);
+  const baseSpeed = big ? METEOR.speed * 0.55 : METEOR.speed + level * METEOR.speedPerLevel;
+  const speed = (hunter ? baseSpeed * METEOR.hunterSpeed : baseSpeed)
     + random.range(-METEOR.speedJitter / 2, METEOR.speedJitter / 2);
   return {
     kind: 'meteor',
-    sub: big ? 'big' : 'normal',
+    sub: big ? 'big' : hunter ? 'hunter' : 'normal',
     x: random.range(radius + 8, FIELD.width - radius - 8),
     y: -radius - 10,
     vx: random.range(-30, 30),
@@ -198,7 +202,7 @@ export function createWorld(random) {
       life: 1.4,
       max: 1.4,
     });
-    burst(well.x, well.y, '#ffd94d', 26, 300);
+    burst(well.x, well.y, '#ffd94d', 40, 320);
     floatText(well.x, well.y - 52, `+${gained}`, '#ffd94d');
     if (state.combo >= 2) floatText(well.x, well.y - 78, `COMBO x${state.combo}`, '#ff5ad1');
     state.stars = state.stars.filter((s) => s.wellId !== well.id);
@@ -206,7 +210,13 @@ export function createWorld(random) {
     events.push({ type: EVENT_SEAL, size: stars.length, combo: state.combo });
     if (target.grand) {
       state.won = true;
-      burst(HEART.x, HEART.y, '#ffd94d', 60, 420);
+      // The Grand seal is a spectacle: a golden storm, a shockwave, a flash.
+      burst(HEART.x, HEART.y, '#ffd94d', 120, 480);
+      burst(well.x, well.y, '#ffd94d', 80, 420);
+      burst(well.x, well.y, '#ffffff', 40, 300);
+      state.shockwaves.push({ x: well.x, y: well.y, r: 10, maxR: 420, life: 0.9, max: 0.9 });
+      state.flash = 0.35;
+      state.shake = 0.5;
       events.push({ type: EVENT_WIN });
       return;
     }
@@ -217,7 +227,7 @@ export function createWorld(random) {
       state.meteors = [];
       state.level += 1;
       state.sealed = 0;
-      state.banner = `LEVEL ${state.level}`;
+      state.banner = `LEVEL ${state.level} — ${levelName(state.level).name}`;
       state.bannerTimer = 1.8;
       events.push({ type: EVENT_LEVEL });
     }
@@ -366,13 +376,24 @@ export function createWorld(random) {
   function stepMeteors(dt, events) {
     for (let i = state.meteors.length - 1; i >= 0; i -= 1) {
       const m = state.meteors[i];
+      // Hunters steer toward the Heart Star: they are the level-3 pressure.
+      if (m.sub === 'hunter') {
+        const dx = HEART.x - m.x;
+        const dy = HEART.y - m.y;
+        const d = Math.max(1, Math.hypot(dx, dy));
+        const steer = 260 * dt;
+        m.vx += (dx / d) * steer;
+        m.vy += (dy / d) * steer;
+      }
       // Gravity wells bend a meteor's path; a well that eats one dies for it.
+      // Big meteors are heavy: a well barely bends them.
       for (const w of state.wells) {
         const dx = w.x - m.x;
         const dy = w.y - m.y;
         const d = Math.hypot(dx, dy);
         if (d < WELL.bendRadius && d > WELL.coreRadius + m.radius) {
-          const pull = 520 * (1 - d / WELL.bendRadius);
+          const bend = m.sub === 'big' ? METEOR.bigBend : 1;
+          const pull = 520 * bend * (1 - d / WELL.bendRadius);
           m.vx += (dx / d) * pull * dt;
           m.vy += (dy / d) * pull * dt;
           m.bent = true;
@@ -487,7 +508,7 @@ export function createWorld(random) {
     const events = [];
     if (state.over || state.won) return events;
     state.time += dt;
-    state.energy = Math.min(ENERGY.max, state.energy + ENERGY.regen * dt);
+    state.energy = Math.min(ENERGY.max, state.energy + regenForLevel(state.level) * dt);
     for (const action of input.takePressed()) {
       if (action === 'place') placeWellAt(state.weaver.x, state.weaver.y, events);
       if (action === 'seal') sealFullest(events);

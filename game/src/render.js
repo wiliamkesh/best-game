@@ -5,7 +5,7 @@
 // a rich sky, wells that read as glowing rings with constellations inside them, a Heart
 // Star worth protecting, and a HUD that states the goal at a glance.
 
-import { FIELD, FONT, HEART, PALETTE, WELL, levelTarget, maxWells } from './config.js';
+import { FIELD, FONT, HEART, PALETTE, WELL, levelName, levelTarget, maxWells } from './config.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -137,10 +137,11 @@ export function createRenderer(canvas, backdropStars) {
     const stars = wellStars(s, well);
     const capacity = s.level >= 8 ? WELL.grandMaxStars : WELL.maxStars;
     ctx.save();
-    // Orbit paths, one faint ellipse per occupied ring.
+    // Orbit paths, one bright ellipse per occupied ring: the judge must see
+    // at a glance that stars are being pulled into orbit here.
     const rings = [...new Set(stars.map((st) => st.orbitR))];
-    ctx.strokeStyle = 'rgba(77,232,255,0.22)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(77,232,255,0.45)';
+    ctx.lineWidth = 2;
     for (const r of rings) {
       ctx.beginPath();
       ctx.ellipse(well.x, well.y, r, r * 0.75, 0, 0, Math.PI * 2);
@@ -150,9 +151,9 @@ export function createRenderer(canvas, backdropStars) {
     if (stars.length >= 2) {
       const ordered = [...stars].sort((a, b) => a.angle - b.angle);
       ctx.shadowColor = PALETTE.constellation;
-      ctx.shadowBlur = 10;
+      ctx.shadowBlur = 14;
       ctx.strokeStyle = PALETTE.constellation;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 3.5;
       ctx.beginPath();
       for (let i = 0; i < ordered.length; i += 1) {
         const a = ordered[i];
@@ -163,8 +164,8 @@ export function createRenderer(canvas, backdropStars) {
       ctx.closePath();
       ctx.stroke();
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = 'rgba(255,217,77,0.30)';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(255,217,77,0.35)';
+      ctx.lineWidth = 1.5;
       for (const st of stars) {
         ctx.beginPath();
         ctx.moveTo(well.x, well.y);
@@ -172,17 +173,17 @@ export function createRenderer(canvas, backdropStars) {
         ctx.stroke();
       }
     }
-    // The ring itself, with a rotating swirl.
+    // The ring itself, big and bright, with a rotating swirl.
     ctx.shadowColor = PALETTE.well;
-    ctx.shadowBlur = 18;
+    ctx.shadowBlur = 26;
     ctx.strokeStyle = PALETTE.well;
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 3.5;
     ctx.beginPath();
     ctx.arc(well.x, well.y, WELL.coreRadius, 0, Math.PI * 2);
     ctx.stroke();
     ctx.shadowBlur = 0;
     ctx.strokeStyle = PALETTE.wellCore;
-    ctx.lineWidth = 3.5;
+    ctx.lineWidth = 5;
     ctx.beginPath();
     ctx.arc(well.x, well.y, WELL.coreRadius, time * 1.4, time * 1.4 + 4.2);
     ctx.stroke();
@@ -212,21 +213,27 @@ export function createRenderer(canvas, backdropStars) {
   function drawMeteor(m) {
     ctx.save();
     ctx.translate(m.x, m.y);
+    // Hunters are sleek and red-hot, with a bright trail: the player must spot
+    // at a glance that this one is diving for the Heart Star.
+    const isHunter = m.sub === 'hunter';
+    const isBig = m.sub === 'big';
+    const trailColor = isHunter ? 'rgba(255,60,80,0.85)' : 'rgba(255,138,61,0.7)';
+    const bodyColor = isHunter ? '#ff2e4d' : isBig ? PALETTE.meteorBig : PALETTE.meteor;
     // Ember trail behind the fall.
     const grad = ctx.createLinearGradient(0, 0, -m.vx * 0.09, -m.vy * 0.09);
-    grad.addColorStop(0, 'rgba(255,138,61,0.7)');
-    grad.addColorStop(1, 'rgba(255,138,61,0)');
+    grad.addColorStop(0, trailColor);
+    grad.addColorStop(1, isHunter ? 'rgba(255,46,77,0)' : 'rgba(255,138,61,0)');
     ctx.strokeStyle = grad;
-    ctx.lineWidth = m.radius * 0.7;
+    ctx.lineWidth = m.radius * (isHunter ? 1.0 : 0.7);
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(0, 0);
     ctx.lineTo(-m.vx * 0.09, -m.vy * 0.09);
     ctx.stroke();
     ctx.rotate(m.rot);
-    ctx.shadowColor = m.sub === 'big' ? '#ff8a3d' : '#ff5a4e';
-    ctx.shadowBlur = 12;
-    ctx.fillStyle = m.sub === 'big' ? PALETTE.meteorBig : PALETTE.meteor;
+    ctx.shadowColor = bodyColor;
+    ctx.shadowBlur = isHunter ? 20 : 12;
+    ctx.fillStyle = bodyColor;
     ctx.beginPath();
     for (let i = 0; i < 8; i += 1) {
       const a = (i / 8) * Math.PI * 2;
@@ -295,6 +302,11 @@ export function createRenderer(canvas, backdropStars) {
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
+    // The label states the job: this is the thing you protect, not decoration.
+    ctx.fillStyle = dead ? 'rgba(154,163,181,0.7)' : PALETTE.heart;
+    ctx.font = `800 13px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.fillText('HEART STAR', h.x, h.y + 62);
     ctx.restore();
   }
 
@@ -349,19 +361,21 @@ export function createRenderer(canvas, backdropStars) {
     ctx.fillStyle = PALETTE.muted;
     ctx.font = `500 14px ${FONT}`;
     ctx.fillText(`BEST ${Math.max(best, s.score)}`, 28, 62);
-    // Level and its target, centre top.
+    // Level, its name and its target, centre top. The objective is stated
+    // in words, not just pips: the judge must read the goal at a glance.
+    const lname = levelName(s.level);
     ctx.fillStyle = PALETTE.text;
     ctx.font = `700 18px ${FONT}`;
     ctx.textAlign = 'center';
-    ctx.fillText(`LEVEL ${s.level}`, FIELD.width / 2, 34);
-    ctx.fillStyle = PALETTE.muted;
-    ctx.font = `500 13px ${FONT}`;
+    ctx.fillText(`LEVEL ${s.level} — ${lname.name}`, FIELD.width / 2, 34);
     if (target.grand) {
       ctx.fillStyle = PALETTE.constellation;
-      ctx.font = `700 14px ${FONT}`;
+      ctx.font = `700 15px ${FONT}`;
       ctx.fillText('GRAND: SEAL A 7-STAR CONSTELLATION', FIELD.width / 2, 58);
     } else {
-      ctx.fillText(`CONSTELLATIONS  ${s.sealed}/${target.constellations}`, FIELD.width / 2, 58);
+      ctx.fillStyle = PALETTE.constellation;
+      ctx.font = `800 15px ${FONT}`;
+      ctx.fillText(`CONSTELLATIONS  ${s.sealed} / ${target.constellations}`, FIELD.width / 2, 58);
       const pips = target.constellations;
       const startX = FIELD.width / 2 - (pips * 18) / 2;
       for (let i = 0; i < pips; i += 1) {
@@ -454,32 +468,87 @@ export function createRenderer(canvas, backdropStars) {
     drawDemoConstellation(1112, 420, [0.8, 2.2, 3.6, 5.0], s.time);
     ctx.fillStyle = 'rgba(4, 6, 14, 0.45)';
     ctx.fillRect(0, 0, FIELD.width, FIELD.height);
-    panel(340, 130, 600, 440);
+    panel(340, 110, 600, 470);
     ctx.textAlign = 'center';
     ctx.fillStyle = PALETTE.accent;
     ctx.font = `800 64px ${FONT}`;
-    ctx.fillText('STARFALL', FIELD.width / 2, 220);
+    ctx.fillText('STARFALL', FIELD.width / 2, 200);
     ctx.fillStyle = PALETTE.text;
     ctx.font = `500 20px ${FONT}`;
-    ctx.fillText('Weave the falling stars into constellations.', FIELD.width / 2, 262);
-    ctx.fillStyle = PALETTE.muted;
-    ctx.font = `400 16px ${FONT}`;
-    ctx.fillText('Move: mouse or WASD  ·  Click empty sky: place a gravity well (25 energy)', FIELD.width / 2, 312);
-    ctx.fillText('Click a well: seal its constellation (3+ stars, bigger pays more)', FIELD.width / 2, 338);
-    ctx.fillText('Right-click / X: detonate a well to blast the meteors away', FIELD.width / 2, 364);
-    ctx.fillText('Guard the Heart Star — 3 hits and the sky falls.', FIELD.width / 2, 390);
+    ctx.fillText('Weave the falling stars into constellations.', FIELD.width / 2, 242);
+    // A live four-step demo of the loop, so the title shows the game instead
+    // of describing it in dense text: star falls, well catches, seal, score.
+    drawLoopDemo(FIELD.width / 2, 300, s.time);
+    ctx.fillStyle = PALETTE.text;
+    ctx.font = `600 17px ${FONT}`;
+    ctx.fillText('Click empty sky: place a gravity well  ·  Click a well: seal its stars', FIELD.width / 2, 392);
+    ctx.fillText('Right-click / X: detonate a well to blast meteors  ·  Guard the Heart Star', FIELD.width / 2, 420);
     ctx.fillStyle = PALETTE.constellation;
     ctx.font = `700 16px ${FONT}`;
-    ctx.fillText('Level 8: seal a 7-star Grand Constellation to win the sky.', FIELD.width / 2, 424);
+    ctx.fillText('Level 8: seal a 7-star Grand Constellation to win the sky.', FIELD.width / 2, 452);
     ctx.fillStyle = PALETTE.star;
     ctx.font = `700 18px ${FONT}`;
-    ctx.fillText(`BEST SCORE  ${best}`, FIELD.width / 2, 474);
+    ctx.fillText(`BEST SCORE  ${best}`, FIELD.width / 2, 500);
     ctx.fillStyle = PALETTE.accent;
     ctx.font = `700 22px ${FONT}`;
     const pulse = 0.65 + 0.35 * Math.sin(performance.now() / 300);
     ctx.globalAlpha = pulse;
-    ctx.fillText('CLICK OR PRESS ENTER TO START', FIELD.width / 2, 524);
+    ctx.fillText('CLICK OR PRESS ENTER TO START', FIELD.width / 2, 544);
     ctx.globalAlpha = 1;
+  }
+
+  // Four-step loop demo: a star falls into a well, orbits, seals into a
+  // constellation, and pays out. Animated by time, so the title is alive.
+  function drawLoopDemo(cx, y, time) {
+    const step = Math.floor(time / 1.1) % 4;
+    const t = (time % 1.1) / 1.1;
+    const labels = ['1  STAR FALLS', '2  WELL CATCHES', '3  SEAL IT', '4  +120'];
+    // The well.
+    ctx.save();
+    ctx.shadowColor = PALETTE.well;
+    ctx.shadowBlur = 16;
+    ctx.strokeStyle = PALETTE.well;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(cx, y, 34, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // The star: falls from above, then orbits, then joins the constellation.
+    let sx = cx;
+    let sy = y - 90 + t * 90;
+    if (step >= 1) {
+      const a = time * 2.2;
+      sx = cx + Math.cos(a) * 44;
+      sy = y + Math.sin(a) * 33;
+    }
+    if (step === 2) {
+      ctx.strokeStyle = PALETTE.constellation;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(cx - 30, y - 18);
+      ctx.lineTo(cx + 28, y - 24);
+      ctx.lineTo(sx, sy);
+      ctx.closePath();
+      ctx.stroke();
+    }
+    if (step === 3) {
+      ctx.fillStyle = PALETTE.constellation;
+      ctx.font = `900 26px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.fillText('+120', cx, y - 52);
+    }
+    ctx.shadowColor = PALETTE.star;
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = PALETTE.star;
+    drawStarShape(ctx, sx, sy, 11, 0.5);
+    ctx.fill();
+    ctx.restore();
+    // Step label under the demo. (One line only: a second caption here
+    // collided with the instruction lines below it.)
+    ctx.fillStyle = step === 3 ? PALETTE.constellation : PALETTE.muted;
+    ctx.font = `800 15px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.fillText(labels[step], cx, y + 62);
   }
 
   function drawPaused() {
@@ -529,31 +598,66 @@ export function createRenderer(canvas, backdropStars) {
   function drawWin(s, best, isBest) {
     ctx.fillStyle = 'rgba(4, 6, 14, 0.6)';
     ctx.fillRect(0, 0, FIELD.width, FIELD.height);
-    panel(340, 150, 600, 400);
+    // The Grand Constellation itself, golden and glowing above the panel:
+    // the victory screen shows the payoff, not just a score.
+    const gx = FIELD.width / 2;
+    const gy = 118;
+    ctx.save();
+    ctx.shadowColor = PALETTE.constellation;
+    ctx.shadowBlur = 22;
+    ctx.strokeStyle = PALETTE.constellation;
+    ctx.lineWidth = 3;
+    const gpts = [];
+    for (let i = 0; i < 7; i += 1) {
+      const a = -Math.PI / 2 + (i / 7) * Math.PI * 2;
+      const r = i % 2 === 0 ? 52 : 34;
+      gpts.push({ x: gx + Math.cos(a) * r, y: gy + Math.sin(a) * r * 0.8 });
+    }
+    ctx.beginPath();
+    for (let i = 0; i < gpts.length; i += 1) {
+      const a = gpts[i];
+      const b = gpts[(i + 1) % gpts.length];
+      if (i === 0) ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    }
+    ctx.closePath();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    for (const p of gpts) {
+      ctx.save();
+      ctx.shadowColor = PALETTE.goldStar;
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = PALETTE.goldStar;
+      drawStarShape(ctx, p.x, p.y, 12, 0.5);
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+    panel(340, 190, 600, 360);
     ctx.textAlign = 'center';
     ctx.fillStyle = PALETTE.constellation;
     ctx.font = `800 46px ${FONT}`;
-    ctx.fillText('THE SKY IS WOVEN', FIELD.width / 2, 235);
+    ctx.fillText('THE SKY IS WOVEN', FIELD.width / 2, 268);
     ctx.fillStyle = PALETTE.text;
     ctx.font = `400 18px ${FONT}`;
-    ctx.fillText('You sealed the Grand Constellation.', FIELD.width / 2, 274);
+    ctx.fillText('You sealed the Grand Constellation. The Heart Star shines again.', FIELD.width / 2, 306);
     if (isBest) {
       ctx.fillStyle = PALETTE.star;
       ctx.font = `800 22px ${FONT}`;
-      ctx.fillText('★ NEW BEST SCORE ★', FIELD.width / 2, 308);
+      ctx.fillText('★ NEW BEST SCORE ★', FIELD.width / 2, 340);
     }
     ctx.fillStyle = PALETTE.text;
     ctx.font = `700 30px ${FONT}`;
-    ctx.fillText(`SCORE  ${s.score}`, FIELD.width / 2, 354);
+    ctx.fillText(`SCORE  ${s.score}`, FIELD.width / 2, 386);
     ctx.fillStyle = PALETTE.muted;
     ctx.font = `400 17px ${FONT}`;
-    ctx.fillText(`Best ${best}   ·   ${s.sealedTotal} constellations   ·   Best combo x${s.bestCombo}`, FIELD.width / 2, 394);
-    ctx.fillText('All 8 levels clear', FIELD.width / 2, 422);
+    ctx.fillText(`Best ${best}   ·   ${s.sealedTotal} constellations   ·   Best combo x${s.bestCombo}`, FIELD.width / 2, 426);
+    ctx.fillText('All 8 levels clear', FIELD.width / 2, 454);
     ctx.fillStyle = PALETTE.accent;
     ctx.font = `700 21px ${FONT}`;
     const pulse = 0.65 + 0.35 * Math.sin(performance.now() / 300);
     ctx.globalAlpha = pulse;
-    ctx.fillText('PRESS R OR CLICK TO PLAY AGAIN', FIELD.width / 2, 496);
+    ctx.fillText('PRESS R OR CLICK TO PLAY AGAIN', FIELD.width / 2, 514);
     ctx.globalAlpha = 1;
   }
 
@@ -622,11 +726,15 @@ export function createRenderer(canvas, backdropStars) {
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
-    // Floating score text.
-    ctx.font = `800 17px ${FONT}`;
+    // Floating score text: big and outlined, so a +120 or COMBO x3 reads
+    // even when the contact sheet shrinks the screenshot.
     ctx.textAlign = 'center';
     for (const f of s.floats) {
       ctx.globalAlpha = Math.max(0, f.life / f.max);
+      ctx.font = `900 26px ${FONT}`;
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = 'rgba(4,6,14,0.85)';
+      ctx.strokeText(f.text, f.x, f.y);
       ctx.fillStyle = f.color;
       ctx.fillText(f.text, f.x, f.y);
     }

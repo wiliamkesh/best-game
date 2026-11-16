@@ -7,7 +7,7 @@
 // through these pictures first.
 
 import { FIELD } from './config.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
 
 function orbitStar(well, angle, index, kind) {
   const orbitR = 30 + index * 8;
@@ -68,7 +68,7 @@ function seedScene(world) {
   s.meteors = [
     { kind: 'meteor', sub: 'normal', x: 220, y: 150, vx: 20, vy: 300, radius: 22, rot: 0.4, spin: 0.8, bent: false },
     { kind: 'meteor', sub: 'big', x: 980, y: 180, vx: -15, vy: 170, radius: 36, rot: 0.1, spin: 0.4, bent: false },
-    { kind: 'meteor', sub: 'normal', x: 700, y: 240, vx: 130, vy: 260, radius: 16, rot: 1.2, spin: -1.1, bent: true },
+    { kind: 'meteor', sub: 'hunter', x: 700, y: 240, vx: 130, vy: 260, radius: 15, rot: 1.2, spin: -1.1, bent: true },
     { kind: 'meteor', sub: 'normal', x: 1120, y: 420, vx: -25, vy: 290, radius: 18, rot: 2.4, spin: 1.0, bent: false },
   ];
   // A constellation sealed a moment ago, rising and fading above the second well.
@@ -104,6 +104,34 @@ export function stageShot(name, world) {
   if (name === 'play') {
     seedScene(world);
     return { screen: SCREEN_PLAY, best: 2480 };
+  }
+  if (name === 'win') {
+    seedScene(world);
+    // The Grand finale: level 8, the 7-star constellation sealed, the Heart
+    // Star restored and glowing, the sky won. This is the payoff shot.
+    s.level = 8;
+    s.score = 5240;
+    s.sealedTotal = 41;
+    s.bestCombo = 5;
+    s.combo = 5;
+    s.won = true;
+    s.rising = [{
+      points: [
+        { dx: 0, dy: -52, kind: 'gold' },
+        { dx: 44, dy: -24, kind: 'gold' },
+        { dx: 36, dy: 30, kind: 'normal' },
+        { dx: -6, dy: 48, kind: 'gold' },
+        { dx: -44, dy: 22, kind: 'normal' },
+        { dx: -38, dy: -30, kind: 'gold' },
+        { dx: 14, dy: -8, kind: 'gold' },
+      ],
+      x: 640,
+      y: 320,
+      life: 1.4,
+      max: 1.4,
+    }];
+    s.meteors = [];
+    return { screen: SCREEN_WIN, best: 2480, isBest: true };
   }
   if (name === 'end') {
     seedScene(world);
