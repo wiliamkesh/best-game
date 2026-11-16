@@ -6,8 +6,10 @@
 // vendored make.fun library. Leave vendor/makefun-game.ts as it is: the scorer
 // requires dossier.json to be byte for byte what its own copy writes.
 //
-// Starfall: a neon arcade survival game. Pilot your ship through a meteor storm,
-// catch the falling stars, chain a combo, grab power-ups and chase the best score.
+// Starfall: a neon constellation-weaving arcade game. Place gravity wells where the
+// stars fall, let them catch the stars into orbit, seal the constellation before a
+// meteor breaks the well — and guard the Heart Star at the bottom of the sky. Seal
+// the 7-star Grand Constellation on level 8 to win the sky.
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts

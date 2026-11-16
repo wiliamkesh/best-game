@@ -1,6 +1,6 @@
 // Boot and the one loop: input is read every frame, the world advances in fixed 1/60 s
 // steps (several in a slow frame, none in a fast one), and the renderer paints what is
-// there. The game moves between four screens: title, play, paused and game over.
+// there. The game moves between five screens: title, play, paused, game over and win.
 //
 // ?seed=N fixes the falling pattern. ?shot=start|play|end (with &seed=N) stages that
 // scene instead of running the loop, paints it twice and sets window.__shotReady for a
@@ -8,9 +8,13 @@
 import { BEST_KEY, LIVES, STEP } from './config.js';
 import { createRandom } from './random.js';
 import { createSound } from './audio.js';
-import { createWorld, EVENT_CATCH, EVENT_HIT, EVENT_LEVEL, EVENT_MISS, EVENT_OVER, EVENT_POWERUP } from './world.js';
-import { ACTION_CONFIRM, ACTION_PAUSE, createInput } from './input.js';
-import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+import {
+  createWorld,
+  EVENT_CAPTURE, EVENT_DENIED, EVENT_DETONATE, EVENT_HEART, EVENT_LEVEL,
+  EVENT_OVER, EVENT_PLACE, EVENT_SEAL, EVENT_SHATTER, EVENT_WELL_LOST, EVENT_WIN,
+} from './world.js';
+import { ACTION_CONFIRM, ACTION_PAUSE, ACTION_PLACE, createInput } from './input.js';
+import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
 import { stageShot } from './shots.js';
 
 /** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped, not replayed. */
@@ -84,11 +88,16 @@ function runGame() {
 
   function handleEvents(events) {
     for (const e of events) {
-      if (e.type === EVENT_CATCH) sound.catch(e.combo);
-      if (e.type === EVENT_MISS) sound.miss();
-      if (e.type === EVENT_HIT) sound.hit();
-      if (e.type === EVENT_POWERUP) sound.powerup();
+      if (e.type === EVENT_PLACE) sound.place();
+      if (e.type === EVENT_CAPTURE) sound.capture(e.count);
+      if (e.type === EVENT_SEAL) sound.seal(e.size, e.combo);
+      if (e.type === EVENT_DETONATE) sound.detonate();
+      if (e.type === EVENT_WELL_LOST) sound.wellLost();
+      if (e.type === EVENT_SHATTER) sound.shatter();
+      if (e.type === EVENT_HEART) sound.heartHit();
       if (e.type === EVENT_LEVEL) sound.levelup();
+      if (e.type === EVENT_WIN) sound.win();
+      if (e.type === EVENT_DENIED) sound.denied();
       if (e.type === EVENT_OVER) {
         sound.over();
         if (world.state.score > best) {
@@ -110,7 +119,7 @@ function runGame() {
     Object.assign(world.state, fresh.state);
     world.state.lives = LIVES;
     screen = SCREEN_PLAY;
-    announce('Playing. Dodge the meteors, catch the stars.');
+    announce('Playing. Place wells, catch stars, seal constellations, guard the Heart Star.');
   }
 
   function frame(now) {
@@ -118,17 +127,34 @@ function runGame() {
     let dt = (now - last) / 1000;
     last = now;
     if (dt > MAX_FRAME) dt = MAX_FRAME;
-    const pressed = input.takePressed();
+    // Peek, don't drain: the world drains the queues itself in step(), so a press or
+    // click is consumed exactly once. Only a screen transition drains them early, so
+    // the click that starts the game never also places a well.
+    const pressed = input.peekPressed();
+    const clicks = input.peekClicks();
     if (pressed.has(ACTION_PAUSE) && screen === SCREEN_PLAY) {
       screen = SCREEN_PAUSED;
+      input.takePressed();
+      input.takeClicks();
       announce('Paused.');
     } else if (pressed.has(ACTION_PAUSE) && screen === SCREEN_PAUSED) {
       screen = SCREEN_PLAY;
+      input.takePressed();
+      input.takeClicks();
       announce('Playing.');
     }
-    if (pressed.has(ACTION_CONFIRM)) {
-      if (screen === SCREEN_TITLE || screen === SCREEN_OVER) start();
-      else if (screen === SCREEN_PAUSED) screen = SCREEN_PLAY;
+    // Space places a well in play, but on any other screen it starts or resumes.
+    const wantConfirm = pressed.has(ACTION_CONFIRM) || pressed.has(ACTION_PLACE);
+    if (wantConfirm || clicks.length > 0) {
+      if (screen === SCREEN_TITLE || screen === SCREEN_OVER || screen === SCREEN_WIN) {
+        start();
+        input.takeClicks();
+        input.takePressed();
+      } else if (screen === SCREEN_PAUSED) {
+        screen = SCREEN_PLAY;
+        input.takePressed();
+        input.takeClicks();
+      }
     }
     if (screen === SCREEN_PLAY) {
       accumulator += dt;
@@ -140,12 +166,22 @@ function runGame() {
           screen = SCREEN_OVER;
           break;
         }
+        if (world.state.won) {
+          if (world.state.score > best) {
+            best = world.state.score;
+            isBest = true;
+            saveBest(best);
+          }
+          announce(`You wove the sky. Score ${world.state.score}. Best ${best}.`);
+          screen = SCREEN_WIN;
+          break;
+        }
       }
     }
     renderer.draw(world.state, screen, best, isBest);
   }
 
-  announce('Starfall. Dodge the meteors, catch the stars. Press Enter or click to start.');
+  announce('Starfall. Place wells, catch stars, seal constellations, guard the Heart Star. Press Enter or click to start.');
   requestAnimationFrame(frame);
 }
 

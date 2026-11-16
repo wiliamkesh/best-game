@@ -1,19 +1,56 @@
-// The world: everything that falls, everything the player catches or dodges, and the
-// score. It knows nothing about the screen; the renderer paints what is here. Events
-// (a catch, a hit, a power-up, a level, game over) are returned from step() so the loop
-// can play a sound and shake the screen for each one.
+// The world: gravity wells, falling stars, meteors and the Heart Star. It knows nothing
+// about the screen; the renderer paints what is here. Events (a well placed, a star
+// captured, a constellation sealed, a well lost, the Heart hit, a level, a win, game
+// over) are returned from step() so the loop can play a sound for each one.
+//
+// The loop, in one sentence: place a gravity well where the stars fall, let it catch
+// them into orbit, seal the constellation before a meteor breaks the well — and keep
+// the meteors off the Heart Star at the bottom of the sky.
 
-import { COMBO, FIELD, LEVEL, LIVES, METEOR, PLAYER, POWERUP, STAR } from './config.js';
+import {
+  COMBO, ENERGY, FIELD, HEART, LEVEL, LIVES, METEOR, STAR, WEAVER, WELL,
+  constellationScore, levelTarget, maxWells,
+} from './config.js';
 
-export const EVENT_CATCH = 'catch';
-export const EVENT_MISS = 'miss';
-export const EVENT_HIT = 'hit';
-export const EVENT_POWERUP = 'powerup';
+export const EVENT_PLACE = 'place';
+export const EVENT_CAPTURE = 'capture';
+export const EVENT_SEAL = 'seal';
+export const EVENT_DETONATE = 'detonate';
+export const EVENT_WELL_LOST = 'welllost';
+export const EVENT_SHATTER = 'shatter';
+export const EVENT_HEART = 'heart';
 export const EVENT_LEVEL = 'level';
+export const EVENT_WIN = 'win';
 export const EVENT_OVER = 'over';
+export const EVENT_DENIED = 'denied';
 
-function makeMeteor(random, level, kind) {
-  const big = kind === 'big';
+let nextWellId = 1;
+
+function makeStar(random, level) {
+  const roll = random.next();
+  let kind = 'normal';
+  if (roll < STAR.goldChance) kind = 'gold';
+  else if (level >= STAR.cometFromLevel && roll < STAR.goldChance + STAR.cometChance) kind = 'comet';
+  const fast = kind === 'comet' ? 95 : 0;
+  return {
+    kind,
+    x: random.range(24, FIELD.width - 24),
+    y: -20,
+    vx: 0,
+    vy: STAR.speed + level * STAR.speedPerLevel + fast,
+    radius: kind === 'gold' ? 13 : kind === 'comet' ? 12 : STAR.radius,
+    phase: random.range(0, Math.PI * 2),
+    state: 'falling',
+    wellId: null,
+    angle: 0,
+    orbitR: 0,
+    orbitSpeed: 0,
+    orbitDir: 1,
+  };
+}
+
+function makeMeteor(random, level) {
+  const big = level >= METEOR.bigFromLevel && random.next() < METEOR.bigChance;
   const radius = big
     ? random.range(30, 40)
     : random.range(METEOR.minRadius, METEOR.maxRadius);
@@ -21,40 +58,15 @@ function makeMeteor(random, level, kind) {
     + random.range(-METEOR.speedJitter / 2, METEOR.speedJitter / 2);
   return {
     kind: 'meteor',
-    sub: big ? 'big' : kind,
+    sub: big ? 'big' : 'normal',
     x: random.range(radius + 8, FIELD.width - radius - 8),
     y: -radius - 10,
-    vx: kind === 'zigzag' ? random.range(90, 170) * (random.next() < 0.5 ? -1 : 1) : 0,
+    vx: random.range(-30, 30),
     vy: Math.max(90, speed),
     radius,
     rot: random.range(0, Math.PI * 2),
     spin: random.range(-1.6, 1.6),
-    passed: false,
-  };
-}
-
-function makeStar(random, level) {
-  return {
-    kind: 'star',
-    x: random.range(24, FIELD.width - 24),
-    y: -20,
-    vy: STAR.speed + level * STAR.speedPerLevel,
-    radius: STAR.radius,
-    phase: random.range(0, Math.PI * 2),
-    passed: false,
-  };
-}
-
-function makePowerup(random) {
-  return {
-    kind: 'powerup',
-    power: random.pick(POWERUP.kinds),
-    x: random.range(30, FIELD.width - 30),
-    y: -20,
-    vy: POWERUP.speed,
-    radius: POWERUP.radius,
-    phase: random.range(0, Math.PI * 2),
-    passed: false,
+    bent: false,
   };
 }
 
@@ -62,38 +74,37 @@ export function createWorld(random) {
   const state = {
     time: 0,
     level: 1,
-    levelTime: 0,
     score: 0,
     combo: 0,
     comboTimer: 0,
     bestCombo: 0,
     lives: LIVES,
-    caught: 0,
-    dodged: 0,
-    missed: 0,
-    player: {
+    sealed: 0,
+    sealedTotal: 0,
+    energy: ENERGY.max,
+    weaver: {
       x: FIELD.width / 2,
       y: FIELD.height - 110,
       vx: 0,
       vy: 0,
-      invulnerable: 0,
-      shield: false,
       trail: [],
     },
-    things: [],
+    heart: { x: HEART.x, y: HEART.y, radius: HEART.radius, flash: 0 },
+    wells: [],
+    stars: [],
+    meteors: [],
     particles: [],
     floats: [],
+    rising: [],
+    shockwaves: [],
     shake: 0,
     flash: 0,
-    magnetUntil: 0,
-    slowUntil: 0,
-    doubleUntil: 0,
-    over: false,
-    meteorTimer: 0.5,
-    starTimer: 0.7,
-    powerupTimer: POWERUP.interval,
     banner: null,
     bannerTimer: 0,
+    over: false,
+    won: false,
+    starTimer: 0.7,
+    meteorTimer: 1.2,
   };
 
   function burst(x, y, color, count, speed) {
@@ -114,24 +125,149 @@ export function createWorld(random) {
   }
 
   function floatText(x, y, text, color) {
-    state.floats.push({ x, y, text, color, life: 0.9, max: 0.9 });
+    state.floats.push({ x, y, text, color, life: 1.1, max: 1.1 });
   }
 
-  function slowFactor() {
-    return state.time < state.slowUntil ? 0.45 : 1;
+  function wellStars(well) {
+    return state.stars.filter((s) => s.wellId === well.id);
   }
 
-  function spawnMeteor() {
-    const level = state.level;
-    let kind = 'normal';
-    const roll = random.next();
-    if (level >= METEOR.bigFromLevel && roll < 0.14) kind = 'big';
-    else if (level >= METEOR.zigzagFromLevel && roll < 0.38) kind = 'zigzag';
-    state.things.push(makeMeteor(random, level, kind));
+  function wellCapacity() {
+    return state.level >= LEVEL.max ? WELL.grandMaxStars : WELL.maxStars;
   }
 
-  function stepPlayer(dt, input) {
-    const p = state.player;
+  function pullRadius() {
+    return state.level >= LEVEL.max ? WELL.grandPullRadius : WELL.pullRadius;
+  }
+
+  function scatterWell(well) {
+    for (const s of wellStars(well)) {
+      s.state = 'falling';
+      s.wellId = null;
+      s.vx = random.range(-90, 90);
+      s.vy = random.range(40, 110);
+    }
+  }
+
+  function placeWellAt(x, y, events) {
+    const px = Math.max(40, Math.min(FIELD.width - 40, x));
+    const py = Math.max(90, Math.min(FIELD.groundY - 30, y));
+    if (state.energy < ENERGY.wellCost) {
+      floatText(state.weaver.x, state.weaver.y - 30, 'NEED ENERGY', '#9aa3b5');
+      events.push({ type: EVENT_DENIED });
+      return;
+    }
+    if (state.wells.length >= maxWells(state.level)) {
+      floatText(state.weaver.x, state.weaver.y - 30, 'WELL LIMIT', '#9aa3b5');
+      events.push({ type: EVENT_DENIED });
+      return;
+    }
+    const well = { id: nextWellId, x: px, y: py, born: state.time, flash: 0 };
+    nextWellId += 1;
+    state.wells.push(well);
+    state.energy -= ENERGY.wellCost;
+    burst(px, py, '#4de8ff', 16, 200);
+    events.push({ type: EVENT_PLACE });
+  }
+
+  function sealWell(well, events) {
+    const stars = wellStars(well);
+    const target = levelTarget(state.level);
+    if (stars.length < target.minStars) {
+      floatText(
+        well.x, well.y - 44,
+        target.grand ? 'THE GRAND NEEDS 7 STARS' : `NEED ${target.minStars} STARS`,
+        '#9aa3b5',
+      );
+      events.push({ type: EVENT_DENIED });
+      return;
+    }
+    const base = constellationScore(stars);
+    state.combo = state.comboTimer > 0 ? Math.min(state.combo + 1, COMBO.max) : 1;
+    state.bestCombo = Math.max(state.bestCombo, state.combo);
+    state.comboTimer = COMBO.window;
+    const gained = base * state.combo;
+    state.score += gained;
+    state.sealed += 1;
+    state.sealedTotal += 1;
+    state.energy = Math.min(ENERGY.max, state.energy + ENERGY.sealRefund * stars.length);
+    state.rising.push({
+      points: stars.map((s) => ({ dx: s.x - well.x, dy: s.y - well.y, kind: s.kind })),
+      x: well.x,
+      y: well.y,
+      life: 1.4,
+      max: 1.4,
+    });
+    burst(well.x, well.y, '#ffd94d', 26, 300);
+    floatText(well.x, well.y - 52, `+${gained}`, '#ffd94d');
+    if (state.combo >= 2) floatText(well.x, well.y - 78, `COMBO x${state.combo}`, '#ff5ad1');
+    state.stars = state.stars.filter((s) => s.wellId !== well.id);
+    state.wells = state.wells.filter((w) => w.id !== well.id);
+    events.push({ type: EVENT_SEAL, size: stars.length, combo: state.combo });
+    if (target.grand) {
+      state.won = true;
+      burst(HEART.x, HEART.y, '#ffd94d', 60, 420);
+      events.push({ type: EVENT_WIN });
+      return;
+    }
+    if (state.sealed >= target.constellations) {
+      state.score += LEVEL.clearBonus * state.level;
+      state.energy = ENERGY.max;
+      for (const m of state.meteors) burst(m.x, m.y, '#ff8a3d', 10, 180);
+      state.meteors = [];
+      state.level += 1;
+      state.sealed = 0;
+      state.banner = `LEVEL ${state.level}`;
+      state.bannerTimer = 1.8;
+      events.push({ type: EVENT_LEVEL });
+    }
+  }
+
+  function sealFullest(events) {
+    if (state.wells.length === 0) return;
+    let best = null;
+    let bestCount = -1;
+    for (const w of state.wells) {
+      const n = wellStars(w).length;
+      if (n > bestCount) {
+        bestCount = n;
+        best = w;
+      }
+    }
+    if (best) sealWell(best, events);
+  }
+
+  function detonateNear(x, y, events) {
+    let best = null;
+    let bestD = WELL.detonateRadius;
+    for (const w of state.wells) {
+      const d = Math.hypot(w.x - x, w.y - y);
+      if (d < bestD) {
+        bestD = d;
+        best = w;
+      }
+    }
+    if (!best) return;
+    scatterWell(best);
+    state.wells = state.wells.filter((w) => w.id !== best.id);
+    state.shockwaves.push({ x: best.x, y: best.y, r: 10, maxR: WELL.detonateRadius, life: 0.5, max: 0.5 });
+    let cleared = 0;
+    for (let i = state.meteors.length - 1; i >= 0; i -= 1) {
+      const m = state.meteors[i];
+      if (Math.hypot(m.x - best.x, m.y - best.y) < WELL.detonateRadius) {
+        burst(m.x, m.y, '#ff8a3d', 14, 220);
+        state.meteors.splice(i, 1);
+        cleared += 1;
+      }
+    }
+    if (cleared > 0) floatText(best.x, best.y - 44, `BLAST x${cleared}`, '#ff8a3d');
+    state.shake = Math.max(state.shake, 0.3);
+    state.flash = 0.18;
+    events.push({ type: EVENT_DETONATE });
+  }
+
+  function stepWeaver(dt, input) {
+    const w = state.weaver;
     const dir = input.directions();
     const pointer = input.pointer();
     let ax = 0;
@@ -142,117 +278,170 @@ export function createWorld(random) {
     if (dir.down) ay += 1;
     if (ax !== 0 || ay !== 0) {
       const len = Math.hypot(ax, ay);
-      p.vx = (ax / len) * PLAYER.speed;
-      p.vy = (ay / len) * PLAYER.speed;
+      w.vx = (ax / len) * WEAVER.speed;
+      w.vy = (ay / len) * WEAVER.speed;
     } else if (pointer) {
-      // Steer toward the pointer, easing in so it never snaps.
-      const dx = pointer.x - p.x;
-      const dy = pointer.y - p.y;
+      const dx = pointer.x - w.x;
+      const dy = pointer.y - w.y;
       const d = Math.hypot(dx, dy);
-      const want = Math.min(PLAYER.speed, d * 8);
-      p.vx = d > 4 ? (dx / d) * want : 0;
-      p.vy = d > 4 ? (dy / d) * want : 0;
+      const want = Math.min(WEAVER.speed, d * 9);
+      w.vx = d > 4 ? (dx / d) * want : 0;
+      w.vy = d > 4 ? (dy / d) * want : 0;
     } else {
-      p.vx = 0;
-      p.vy = 0;
+      w.vx = 0;
+      w.vy = 0;
     }
-    p.x = Math.max(PLAYER.radius + 6, Math.min(FIELD.width - PLAYER.radius - 6, p.x + p.vx * dt));
-    p.y = Math.max(90, Math.min(FIELD.groundY - PLAYER.radius - 6, p.y + p.vy * dt));
-    p.trail.unshift({ x: p.x, y: p.y + 14 });
-    if (p.trail.length > PLAYER.trail) p.trail.pop();
-    if (p.invulnerable > 0) p.invulnerable -= dt;
+    w.x = Math.max(WEAVER.radius + 6, Math.min(FIELD.width - WEAVER.radius - 6, w.x + w.vx * dt));
+    w.y = Math.max(70, Math.min(FIELD.groundY - WEAVER.radius - 6, w.y + w.vy * dt));
+    w.trail.unshift({ x: w.x, y: w.y });
+    if (w.trail.length > WEAVER.trail) w.trail.pop();
   }
 
-  function stepThings(dt, events) {
-    const p = state.player;
-    const slow = slowFactor();
-    const magnet = state.time < state.magnetUntil;
-    for (let i = state.things.length - 1; i >= 0; i -= 1) {
-      const t = state.things[i];
-      if (t.kind === 'meteor' && t.sub === 'zigzag') {
-        t.x += t.vx * dt * slow;
-        if (t.x < t.radius + 6 || t.x > FIELD.width - t.radius - 6) t.vx *= -1;
+  function stepStars(dt, events) {
+    const pr = pullRadius();
+    const cap = wellCapacity();
+    for (let i = state.stars.length - 1; i >= 0; i -= 1) {
+      const s = state.stars[i];
+      if (s.state === 'orbit') {
+        const well = state.wells.find((w) => w.id === s.wellId);
+        if (!well) {
+          s.state = 'falling';
+          s.wellId = null;
+          s.vx = random.range(-60, 60);
+          s.vy = 60;
+          continue;
+        }
+        s.angle += s.orbitSpeed * s.orbitDir * dt;
+        s.x = well.x + Math.cos(s.angle) * s.orbitR;
+        s.y = well.y + Math.sin(s.angle) * s.orbitR * 0.75;
+        continue;
       }
-      if (magnet && (t.kind === 'star' || t.kind === 'powerup')) {
-        const dx = p.x - t.x;
-        const dy = p.y - t.y;
+      // Falling: the nearest well in range pulls it in.
+      let nearest = null;
+      let nearestD = pr;
+      for (const w of state.wells) {
+        if (wellStars(w).length >= cap) continue;
+        const d = Math.hypot(w.x - s.x, w.y - s.y);
+        if (d < nearestD) {
+          nearestD = d;
+          nearest = w;
+        }
+      }
+      if (nearest) {
+        const dx = nearest.x - s.x;
+        const dy = nearest.y - s.y;
+        const d = Math.max(1, Math.hypot(dx, dy));
+        const pull = 1050 * (1 - d / pr);
+        s.vx += (dx / d) * pull * dt;
+        s.vy += (dy / d) * pull * dt;
+        const speed = Math.hypot(s.vx, s.vy);
+        if (speed > 430) {
+          s.vx = (s.vx / speed) * 430;
+          s.vy = (s.vy / speed) * 430;
+        }
+        const count = wellStars(nearest).length;
+        const orbitR = WELL.orbitBase + count * WELL.orbitStep;
+        if (d < orbitR + 6) {
+          s.state = 'orbit';
+          s.wellId = nearest.id;
+          s.angle = Math.atan2(s.y - nearest.y, s.x - nearest.x);
+          s.orbitR = orbitR;
+          s.orbitSpeed = random.range(1.3, 2.1);
+          s.orbitDir = random.next() < 0.5 ? -1 : 1;
+          s.vx = 0;
+          s.vy = 0;
+          burst(s.x, s.y, '#a5f3fc', 8, 140);
+          events.push({ type: EVENT_CAPTURE, count: count + 1 });
+          // Caught: its position is the orbit's from here on, so it must not
+          // also move by its old falling velocity this step.
+          continue;
+        }
+      }
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      if (s.y - s.radius > FIELD.groundY) state.stars.splice(i, 1);
+    }
+  }
+
+  function stepMeteors(dt, events) {
+    for (let i = state.meteors.length - 1; i >= 0; i -= 1) {
+      const m = state.meteors[i];
+      // Gravity wells bend a meteor's path; a well that eats one dies for it.
+      for (const w of state.wells) {
+        const dx = w.x - m.x;
+        const dy = w.y - m.y;
         const d = Math.hypot(dx, dy);
-        if (d > 1 && d < 260) {
-          t.x += (dx / d) * 340 * dt;
-          t.y += (dy / d) * 340 * dt;
+        if (d < WELL.bendRadius && d > WELL.coreRadius + m.radius) {
+          const pull = 520 * (1 - d / WELL.bendRadius);
+          m.vx += (dx / d) * pull * dt;
+          m.vy += (dy / d) * pull * dt;
+          m.bent = true;
         }
       }
-      t.y += t.vy * dt * slow;
-      if (t.kind === 'meteor') t.rot += t.spin * dt;
-      const dx = t.x - p.x;
-      const dy = t.y - p.y;
-      const hitDist = t.radius + PLAYER.radius - 4;
-      if (dx * dx + dy * dy < hitDist * hitDist) {
-        if (t.kind === 'meteor') {
-          state.things.splice(i, 1);
-          if (p.invulnerable > 0) continue;
-          if (p.shield) {
-            p.shield = false;
-            p.invulnerable = PLAYER.invulnerable;
-            burst(p.x, p.y, '#4dd8ff', 26, 260);
-            state.shake = 0.35;
-            floatText(p.x, p.y - 30, 'SHIELD!', '#4dd8ff');
-            events.push({ type: EVENT_HIT, shield: true });
-            continue;
-          }
-          state.lives -= 1;
+      const speed = Math.hypot(m.vx, m.vy);
+      if (speed > 540) {
+        m.vx = (m.vx / speed) * 540;
+        m.vy = (m.vy / speed) * 540;
+      }
+      m.x += m.vx * dt;
+      m.y += m.vy * dt;
+      m.rot += m.spin * dt;
+      let dead = false;
+      for (const w of [...state.wells]) {
+        const d = Math.hypot(w.x - m.x, w.y - m.y);
+        if (d < WELL.coreRadius + m.radius) {
+          scatterWell(w);
+          state.wells = state.wells.filter((x) => x.id !== w.id);
+          burst(w.x, w.y, '#4de8ff', 22, 260);
+          burst(m.x, m.y, '#ff8a3d', 16, 220);
           state.combo = 0;
-          p.invulnerable = PLAYER.invulnerable;
-          burst(p.x, p.y, '#ff5a4e', 34, 320);
-          burst(t.x, t.y, '#ff8a3d', 18, 220);
-          state.shake = 0.55;
-          events.push({ type: EVENT_HIT });
-          if (state.lives <= 0) {
-            state.over = true;
-            events.push({ type: EVENT_OVER });
-          }
-          continue;
-        }
-        if (t.kind === 'star') {
-          state.things.splice(i, 1);
-          state.caught += 1;
-          state.combo = Math.min(state.combo + 1, COMBO.max);
-          state.bestCombo = Math.max(state.bestCombo, state.combo);
-          state.comboTimer = COMBO.window;
-          const mult = state.combo * (state.time < state.doubleUntil ? 2 : 1);
-          const gained = STAR.points * mult;
-          state.score += gained;
-          burst(t.x, t.y, '#ffd94d', 12, 180);
-          floatText(t.x, t.y - 14, `+${gained}`, '#ffd94d');
-          events.push({ type: EVENT_CATCH, combo: state.combo });
-          continue;
-        }
-        if (t.kind === 'powerup') {
-          state.things.splice(i, 1);
-          if (t.power === 'shield') state.player.shield = true;
-          if (t.power === 'magnet') state.magnetUntil = state.time + POWERUP.duration.magnet;
-          if (t.power === 'slow') state.slowUntil = state.time + POWERUP.duration.slow;
-          if (t.power === 'double') state.doubleUntil = state.time + POWERUP.duration.double;
-          burst(t.x, t.y, '#ffffff', 20, 240);
-          floatText(t.x, t.y - 16, t.power.toUpperCase(), '#ffffff');
-          state.flash = 0.25;
-          events.push({ type: EVENT_POWERUP, power: t.power });
-          continue;
+          state.comboTimer = 0;
+          state.shake = Math.max(state.shake, 0.4);
+          floatText(w.x, w.y - 40, 'WELL LOST', '#4de8ff');
+          events.push({ type: EVENT_WELL_LOST });
+          dead = true;
+          break;
         }
       }
-      if (t.y - t.radius > FIELD.groundY) {
-        state.things.splice(i, 1);
-        if (t.kind === 'meteor' && !t.passed) {
-          state.dodged += 1;
-          state.score += METEOR.dodgePoints;
+      if (dead) {
+        state.meteors.splice(i, 1);
+        continue;
+      }
+      const hd = Math.hypot(HEART.x - m.x, HEART.y - m.y);
+      if (hd < HEART.radius + m.radius) {
+        state.meteors.splice(i, 1);
+        state.lives -= 1;
+        state.heart.flash = 1;
+        state.combo = 0;
+        state.comboTimer = 0;
+        burst(HEART.x, HEART.y, '#ff6b81', 36, 340);
+        state.shake = 0.6;
+        events.push({ type: EVENT_HEART });
+        if (state.lives <= 0) {
+          state.over = true;
+          events.push({ type: EVENT_OVER });
         }
-        if (t.kind === 'star') {
-          state.missed += 1;
-          if (state.combo > 0) {
-            state.combo = 0;
-            events.push({ type: EVENT_MISS });
-          }
+        continue;
+      }
+      for (let j = state.meteors.length - 1; j > i; j -= 1) {
+        const o = state.meteors[j];
+        const dd = Math.hypot(o.x - m.x, o.y - m.y);
+        if (dd < m.radius + o.radius) {
+          burst(m.x, m.y, '#ff8a3d', 18, 240);
+          burst(o.x, o.y, '#ff8a3d', 18, 240);
+          state.score += METEOR.shatterPoints * 2;
+          floatText((m.x + o.x) / 2, (m.y + o.y) / 2 - 20, `SHATTER +${METEOR.shatterPoints * 2}`, '#ff8a3d');
+          state.meteors.splice(j, 1);
+          state.meteors.splice(i, 1);
+          events.push({ type: EVENT_SHATTER });
+          dead = true;
+          break;
         }
+      }
+      if (dead) continue;
+      if (m.y - m.radius > FIELD.groundY || m.x < -60 || m.x > FIELD.width + 60) {
+        burst(m.x, Math.min(m.y, FIELD.groundY), '#5b6478', 8, 120);
+        state.meteors.splice(i, 1);
       }
     }
   }
@@ -272,9 +461,22 @@ export function createWorld(random) {
       f.life -= dt;
       if (f.life <= 0) state.floats.splice(i, 1);
     }
+    for (let i = state.rising.length - 1; i >= 0; i -= 1) {
+      const r = state.rising[i];
+      r.y -= 46 * dt;
+      r.life -= dt;
+      if (r.life <= 0) state.rising.splice(i, 1);
+    }
+    for (let i = state.shockwaves.length - 1; i >= 0; i -= 1) {
+      const s = state.shockwaves[i];
+      s.r += 620 * dt;
+      s.life -= dt;
+      if (s.life <= 0 || s.r >= s.maxR) state.shockwaves.splice(i, 1);
+    }
     if (state.shake > 0) state.shake -= dt;
     if (state.flash > 0) state.flash -= dt;
     if (state.bannerTimer > 0) state.bannerTimer -= dt;
+    if (state.heart.flash > 0) state.heart.flash -= dt;
     if (state.comboTimer > 0) {
       state.comboTimer -= dt;
       if (state.comboTimer <= 0) state.combo = 0;
@@ -283,39 +485,46 @@ export function createWorld(random) {
 
   function step(dt, input) {
     const events = [];
-    if (state.over) return events;
+    if (state.over || state.won) return events;
     state.time += dt;
-    state.levelTime += dt;
-    if (state.levelTime >= LEVEL.seconds && state.level < LEVEL.max) {
-      state.level += 1;
-      state.levelTime = 0;
-      state.score += LEVEL.bonus;
-      state.banner = `LEVEL ${state.level}`;
-      state.bannerTimer = 1.6;
-      events.push({ type: EVENT_LEVEL });
+    state.energy = Math.min(ENERGY.max, state.energy + ENERGY.regen * dt);
+    for (const action of input.takePressed()) {
+      if (action === 'place') placeWellAt(state.weaver.x, state.weaver.y, events);
+      if (action === 'seal') sealFullest(events);
+      if (action === 'detonate') detonateNear(state.weaver.x, state.weaver.y, events);
     }
-    stepPlayer(dt, input);
-    const slow = slowFactor();
+    for (const click of input.takeClicks()) {
+      if (click.button === 'right') {
+        detonateNear(click.x, click.y, events);
+        continue;
+      }
+      let hit = null;
+      for (const w of state.wells) {
+        if (Math.hypot(w.x - click.x, w.y - click.y) < WELL.coreRadius + 16) {
+          hit = w;
+          break;
+        }
+      }
+      if (hit) sealWell(hit, events);
+      else placeWellAt(click.x, click.y, events);
+    }
+    stepWeaver(dt, input);
+    state.starTimer -= dt;
+    if (state.starTimer <= 0) {
+      state.stars.push(makeStar(random, state.level));
+      state.starTimer = STAR.interval * random.range(0.6, 1.4);
+    }
     state.meteorTimer -= dt;
     if (state.meteorTimer <= 0) {
-      spawnMeteor();
+      state.meteors.push(makeMeteor(random, state.level));
       const interval = Math.max(
         METEOR.minInterval,
         METEOR.interval * Math.pow(METEOR.intervalScale, state.level - 1),
       );
-      state.meteorTimer = interval * random.range(0.7, 1.3) * slow;
+      state.meteorTimer = interval * random.range(0.7, 1.3);
     }
-    state.starTimer -= dt;
-    if (state.starTimer <= 0) {
-      state.things.push(makeStar(random, state.level));
-      state.starTimer = STAR.interval * random.range(0.6, 1.4);
-    }
-    state.powerupTimer -= dt;
-    if (state.powerupTimer <= 0) {
-      state.things.push(makePowerup(random));
-      state.powerupTimer = POWERUP.interval * random.range(0.7, 1.3);
-    }
-    stepThings(dt, events);
+    stepStars(dt, events);
+    stepMeteors(dt, events);
     stepFx(dt);
     return events;
   }

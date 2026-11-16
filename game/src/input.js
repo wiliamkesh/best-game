@@ -1,7 +1,11 @@
-// Input: keyboard, mouse and touch, all read every frame. The ship follows the pointer
-// when one is down or moving, and the arrow keys / A D W S steer it too. Confirm is the
-// key or click that starts and restarts; pause is P or Escape.
+// Input: keyboard, mouse and touch, all read every frame. The Weaver follows the
+// pointer wherever it goes; a left click places a well (or seals the well it lands
+// on), a right click detonates the nearest well. Space places a well at the Weaver,
+// E seals the fullest well, X detonates the nearest one, R restarts, P pauses.
 
+export const ACTION_PLACE = 'place';
+export const ACTION_SEAL = 'seal';
+export const ACTION_DETONATE = 'detonate';
 export const ACTION_CONFIRM = 'confirm';
 export const ACTION_PAUSE = 'pause';
 
@@ -14,8 +18,10 @@ const KEYS = {
   KeyW: 'up',
   ArrowDown: 'down',
   KeyS: 'down',
+  Space: ACTION_PLACE,
+  KeyE: ACTION_SEAL,
+  KeyX: ACTION_DETONATE,
   Enter: ACTION_CONFIRM,
-  Space: ACTION_CONFIRM,
   KeyR: ACTION_CONFIRM,
   KeyP: ACTION_PAUSE,
   Escape: ACTION_PAUSE,
@@ -24,8 +30,9 @@ const KEYS = {
 export function createInput(canvas) {
   const held = new Set();
   const pressed = new Set();
+  const clicks = [];
   let pointer = null;
-  let pointerActive = false;
+  let pointerSeen = false;
 
   function toLocal(event) {
     const rect = canvas.getBoundingClientRect();
@@ -48,20 +55,18 @@ export function createInput(canvas) {
   });
   window.addEventListener('blur', () => held.clear());
 
+  canvas.addEventListener('pointermove', (event) => {
+    pointer = toLocal(event);
+    pointerSeen = true;
+  });
   canvas.addEventListener('pointerdown', (event) => {
     pointer = toLocal(event);
-    pointerActive = true;
+    pointerSeen = true;
     pressed.add(ACTION_CONFIRM);
+    if (event.button === 2) clicks.push({ button: 'right', x: pointer.x, y: pointer.y });
+    else if (event.button === 0) clicks.push({ button: 'left', x: pointer.x, y: pointer.y });
   });
-  canvas.addEventListener('pointermove', (event) => {
-    if (pointerActive) pointer = toLocal(event);
-  });
-  window.addEventListener('pointerup', () => {
-    pointerActive = false;
-  });
-  canvas.addEventListener('pointerleave', () => {
-    pointerActive = false;
-  });
+  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
   return {
     /** Held directions, as {left, right, up, down} of booleans. */
@@ -73,15 +78,28 @@ export function createInput(canvas) {
         down: held.has('down'),
       };
     },
-    /** The pointer's logical position, or null when no pointer is steering. */
+    /** The pointer's logical position, or null before the pointer has ever moved. */
     pointer() {
-      return pointerActive ? pointer : null;
+      return pointerSeen ? pointer : null;
     },
     /** Actions pressed since the last frame; calling this clears them. */
     takePressed() {
       const out = new Set(pressed);
       pressed.clear();
       return out;
+    },
+    /** Clicks since the last frame, each {button: 'left'|'right', x, y}. */
+    takeClicks() {
+      const out = clicks.splice(0, clicks.length);
+      return out;
+    },
+    /** A non-draining view of the pressed actions (the loop peeks before the world drains). */
+    peekPressed() {
+      return pressed;
+    },
+    /** A non-draining view of the clicks (the loop peeks before the world drains). */
+    peekClicks() {
+      return clicks;
     },
   };
 }

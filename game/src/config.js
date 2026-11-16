@@ -6,72 +6,114 @@ export const FIELD = { width: 1280, height: 720, groundY: 690 };
 /** The simulation's fixed step, in seconds: 60 updates a second whatever the display's rate. */
 export const STEP = 1 / 60;
 
-export const PLAYER = {
-  radius: 16,
-  speed: 620,
-  invulnerable: 1.6,
-  trail: 14,
+/** The Weaver: the luminous orb you steer. It places wells and seals them; it never dies. */
+export const WEAVER = {
+  radius: 14,
+  speed: 640,
+  trail: 16,
 };
 
 export const LIVES = 3;
 
-/** Falling meteors: the hazard. Speed and spawn rate grow with the level. */
-export const METEOR = {
-  minRadius: 12,
-  maxRadius: 30,
-  speed: 230,
-  speedPerLevel: 26,
-  speedJitter: 100,
-  interval: 0.62,
-  intervalScale: 0.9,
-  minInterval: 0.16,
-  dodgePoints: 1,
-  /** Levels at which the zigzag and the big slow meteor first appear. */
-  zigzagFromLevel: 3,
-  bigFromLevel: 5,
+/** Energy: placing a well costs, sealing refunds, and it regenerates over time. */
+export const ENERGY = {
+  max: 100,
+  wellCost: 25,
+  regen: 7,
+  sealRefund: 10,
 };
 
-/** Falling stars: the score. Catch them in a row to raise the combo. */
+/** Gravity wells: what you place, what catches stars, what meteors break. */
+export const WELL = {
+  pullRadius: 120,
+  grandPullRadius: 150,
+  orbitBase: 30,
+  orbitStep: 8,
+  maxStars: 6,
+  grandMaxStars: 7,
+  bendRadius: 150,
+  coreRadius: 30,
+  detonateRadius: 210,
+};
+
+/** Falling stars: the score. Catch them in a well, then seal the constellation. */
 export const STAR = {
   radius: 11,
-  speed: 185,
-  speedPerLevel: 12,
-  interval: 1.05,
-  intervalJitter: 0.55,
-  points: 10,
+  speed: 170,
+  speedPerLevel: 10,
+  interval: 0.9,
+  intervalJitter: 0.4,
+  goldChance: 0.08,
+  cometChance: 0.06,
+  cometFromLevel: 3,
 };
 
-/** Power-ups: rare, slow, glowing. Each lasts a few seconds once caught. */
-export const POWERUP = {
-  radius: 15,
-  speed: 120,
-  interval: 13,
-  intervalJitter: 6,
-  kinds: ['shield', 'magnet', 'slow', 'double'],
-  duration: { shield: 0, magnet: 8, slow: 6, double: 10 },
+/** Meteors: the hazard. They break wells, shatter each other, and hunt the Heart Star. */
+export const METEOR = {
+  minRadius: 12,
+  maxRadius: 28,
+  speed: 210,
+  speedPerLevel: 22,
+  speedJitter: 90,
+  interval: 1.5,
+  intervalScale: 0.88,
+  minInterval: 0.55,
+  bigFromLevel: 4,
+  bigChance: 0.12,
+  shatterPoints: 25,
 };
 
-export const COMBO = { max: 5, window: 1.6 };
+/** Sealing constellations in quick succession raises the combo multiplier. */
+export const COMBO = { max: 5, window: 4 };
 
-/** Seconds of play per level, and the last level: speeds and spawn rates stop growing there. */
-export const LEVEL = { seconds: 15, max: 12, bonus: 50 };
+/** Levels: seal the target number of constellations to clear one. Level 8 is the Grand. */
+export const LEVEL = { max: 8, clearBonus: 100 };
 
-export const POOL_SIZE = 96;
+/** The Heart Star: the anchor you protect at the bottom of the sky. */
+export const HEART = { x: 640, y: 636, radius: 26 };
+
+/** How many constellations of at least minStars clear this level. */
+export function levelTarget(level) {
+  if (level >= LEVEL.max) return { constellations: 1, minStars: 7, grand: true };
+  return { constellations: 2 + level, minStars: 3, grand: false };
+}
+
+/** How many wells you may have placed at once on this level. */
+export function maxWells(level) {
+  return 2 + Math.floor((level - 1) / 3);
+}
+
+/** Points for sealing a constellation: quadratic in its size, plus star bonuses. */
+export function constellationScore(stars) {
+  const n = stars.length;
+  let base = 10 * n * (n - 1);
+  for (const s of stars) {
+    if (s.kind === 'gold') base += 20;
+    if (s.kind === 'comet') base += 30;
+  }
+  return base;
+}
 
 export const PALETTE = {
   backdrop: '#070a14',
-  skyTop: '#0b1026',
-  skyBottom: '#131a33',
+  skyTop: '#0a0e24',
+  skyBottom: '#1a1440',
+  nebulaPurple: 'rgba(124, 77, 255, 0.16)',
+  nebulaTeal: 'rgba(45, 212, 191, 0.12)',
+  nebulaPink: 'rgba(255, 90, 209, 0.10)',
   ground: '#1d2440',
-  player: '#4de8ff',
-  playerGlow: '#1fb6d6',
+  weaver: '#7df9ff',
+  weaverGlow: '#22d3ee',
+  well: '#4de8ff',
+  wellCore: '#a5f3fc',
+  constellation: '#ffd94d',
+  goldStar: '#ffe14d',
+  star: '#fff3b0',
+  comet: '#ffb347',
   meteor: '#ff5a4e',
   meteorBig: '#ff8a3d',
-  star: '#ffd94d',
-  shield: '#4dd8ff',
-  magnet: '#ff5ad1',
-  slow: '#7aa8ff',
-  double: '#ffe14d',
+  heart: '#ff6b81',
+  heartGlow: '#fb7185',
   panel: 'rgba(16, 22, 42, 0.88)',
   text: '#eef1f5',
   muted: '#9aa3b5',
